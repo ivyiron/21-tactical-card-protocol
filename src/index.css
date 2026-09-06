@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg: #f8f7f4;
+    --ink: #1a1a1a;
+    --accent: #ff4d00;
+    --ink-faint: rgba(26, 26, 26, 0.08);
+    --ink-medium: rgba(26, 26, 26, 0.6);
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, .font-cyber, .font-syne {
+    font-family: 'Syne', sans-serif;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'Space Mono', monospace;
+  }
+}
+
+/* 3D Card Flip styles */
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+/* Industrial Dot Texture */
+.grid-texture {
+  background-image: radial-gradient(rgba(26, 26, 26, 0.08) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Industrial Brutalist Card Shadows */
+.brutal-shadow {
+  box-shadow: 4px 4px 0 rgba(26, 26, 26, 0.12);
+}
+
+.brutal-shadow-sm {
+  box-shadow: 2px 2px 0 rgba(26, 26, 26, 0.12);
+}
+
+.brutal-shadow-accent {
+  box-shadow: 4px 4px 0 #ff4d00;
+}
+
+.brutal-shadow-solid {
+  box-shadow: 6px 6px 0 #1a1a1a;
+}
+
+/* Laser scanline (subtle) */
+@keyframes scanline {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(1000%);
+  }
+}
+
+.animate-scanline {
+  animation: scanline 12s linear infinite;
+}
+
+/* Suspense pulse */
+@keyframes suspensePulse {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(0.995);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.005);
+  }
+}
+
+.animate-suspense {
+  animation: suspensePulse 1.2s ease-in-out infinite;
+}
+
+
