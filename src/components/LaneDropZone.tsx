@@ -77,8 +77,8 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
     closest10: {
       duelTag: 'BOX 03',
       title: 'Proxima',
-      subtitle: 'Near 10 Wins • 2 Cards',
-      ruleDetail: 'Pair closest to sum of 10 wins. Chameleon X resolves to 0 or 10.',
+      subtitle: 'Near 15 Wins • 2 Cards',
+      ruleDetail: 'Pair closest to sum of 15 wins. Chameleon X resolves to 0 or 10.',
       borderColor: 'border-[#ff4d00]',
     },
   };
@@ -291,7 +291,7 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
                 </span>
                 {type === 'closest10' && (
                   <span className="text-[10px] font-mono font-bold text-[#ff4d00] mt-0.5">
-                    Δ {evaluation.opponentDistanceTo10} to 10
+                    Δ {evaluation.opponentDistanceTo10} to 15
                   </span>
                 )}
               </div>
@@ -306,7 +306,7 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
                     : 'VS'}
                 </span>
                 <span className="text-[7.5px] font-mono font-bold uppercase tracking-widest text-[#1a1a1a]/60 mt-0.5">
-                  {type === 'higher' ? 'HIGHER' : type === 'lower' ? 'LOWER' : 'CLOSEST 10'}
+                  {type === 'higher' ? 'HIGHER' : type === 'lower' ? 'LOWER' : 'CLOSEST 15'}
                 </span>
               </div>
 
@@ -322,7 +322,7 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
                 </span>
                 {type === 'closest10' && (
                   <span className="text-[10px] font-mono font-bold text-[#1a1a1a] mt-0.5">
-                    Δ {evaluation.playerDistanceTo10} to 10
+                    Δ {evaluation.playerDistanceTo10} to 15
                   </span>
                 )}
               </div>

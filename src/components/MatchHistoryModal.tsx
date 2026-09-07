@@ -199,7 +199,7 @@ export const MatchHistoryModal: React.FC<MatchHistoryModalProps> = ({
                             ? 'BOX I: MAXIMA (HIGHEST SINGLE CARD)'
                             : laneKey === 'lower'
                             ? 'BOX II: MINIMA (LOWEST PAIR SUM)'
-                            : 'BOX III: PROXIMA (CLOSEST TO 10)';
+                            : 'BOX III: PROXIMA (CLOSEST TO 15)';
 
                         const isPlayerWin = laneEval.winner === 'player';
                         const isOpponentWin = laneEval.winner === 'opponent';

@@ -366,13 +366,13 @@ export const RulesModal: React.FC<RulesModalProps> = ({
                     <div className="mt-2 text-xs text-[#1a1a1a]/70">
                       {isVI ? (
                         <>
-                          <strong>2 lá.</strong> Cặp có tổng gần 10 nhất sẽ
+                          <strong>2 lá.</strong> Cặp có tổng gần 15 nhất sẽ
                           thắng. Chameleon X = 0 hoặc 10 tùy theo cái nào có lợi hơn.
                         </>
                       ) : (
                         <>
                           <strong>2 cards.</strong> Pair with the sum closest
-                          to 10 wins.
+                          to 15 wins. Chameleon X resolves to 0 or 10.
                         </>
                       )}
                     </div>

@@ -62,8 +62,8 @@ export function shuffleDeck(deck: Card[]): Card[] {
  * Card X rules:
  * - 'higher': X = 10
  * - 'lower': X = 0
- * - 'closest10': X can be 0 or 10, picking whichever makes the pair's sum closer to 10.
- *   If distances are equal (e.g. companion is 5), picks 10 to maximize tie-break sum.
+ * - 'closest10': (Proxima) X can be 0 or 10, picking whichever makes the pair's sum closer to 15.
+ *   If distances are equal (e.g. companion is 10: 10+0=10 (dist 5), 10+10=20 (dist 5)), picks 10 to maximize tie-break sum.
  */
 export function resolveLaneCards(cards: Card[], lane: LaneType): ResolvedCard[] {
   if (lane === 'higher') {
@@ -80,7 +80,7 @@ export function resolveLaneCards(cards: Card[], lane: LaneType): ResolvedCard[] 
     }));
   }
 
-  // Lane: 'closest10' (2 cards)
+  // Lane: 'closest10' (Proxima: closest to 15, 2 cards)
   const hasX = cards.some(c => c.isX);
   if (!hasX) {
     return cards.map(c => ({
@@ -89,15 +89,15 @@ export function resolveLaneCards(cards: Card[], lane: LaneType): ResolvedCard[] 
     }));
   }
 
-  // There is an X card in 'closest10'
+  // There is an X card in Proxima
   // Find non-X companion
   const companion = cards.find(c => !c.isX);
   const compVal = companion ? (companion.value as number) : 0;
 
-  // Option 0: X = 0 -> sum = 0 + compVal -> distance = |compVal - 10|
-  const distWith0 = Math.abs(compVal - 10);
-  // Option 10: X = 10 -> sum = 10 + compVal -> distance = |10 + compVal - 10| = compVal
-  const distWith10 = Math.abs(10 + compVal - 10);
+  // Option 0: X = 0 -> sum = 0 + compVal -> distance = |compVal - 15|
+  const distWith0 = Math.abs(compVal - 15);
+  // Option 10: X = 10 -> sum = 10 + compVal -> distance = |10 + compVal - 15|
+  const distWith10 = Math.abs(10 + compVal - 15);
 
   let optimalX = 10;
   if (distWith0 < distWith10) {
@@ -105,7 +105,7 @@ export function resolveLaneCards(cards: Card[], lane: LaneType): ResolvedCard[] 
   } else if (distWith10 < distWith0) {
     optimalX = 10;
   } else {
-    // Equal distance (e.g. compVal = 5: |5-10|=5 vs |15-10|=5)
+    // Equal distance (e.g. compVal = 10: |10-15|=5 vs |20-15|=5)
     // 10 is strategically superior because in tie-breakers higher sum wins!
     optimalX = 10;
   }
@@ -193,21 +193,21 @@ export function evaluateLane(
       reason = `Total ${pVal} = ${oVal} (Arena tied)`;
     }
   } else {
-    // lane === 'closest10'
+    // lane === 'closest10' (Proxima: closest to 15)
     pVal = pResolved.reduce((acc, c) => acc + c.resolvedValue, 0);
     oVal = oResolved.reduce((acc, c) => acc + c.resolvedValue, 0);
-    pDist = Math.abs(pVal - 10);
-    oDist = Math.abs(oVal - 10);
+    pDist = Math.abs(pVal - 15);
+    oDist = Math.abs(oVal - 15);
 
     if (pDist < oDist) {
       winner = 'player';
-      reason = `Total ${pVal} (dist: ${pDist}) closer to 10 than ${oVal} (dist: ${oDist}) (Player wins)`;
+      reason = `Total ${pVal} (dist: ${pDist}) closer to 15 than ${oVal} (dist: ${oDist}) (Player wins)`;
     } else if (oDist < pDist) {
       winner = 'opponent';
-      reason = `Total ${oVal} (dist: ${oDist}) closer to 10 than ${pVal} (dist: ${pDist}) (Opponent wins)`;
+      reason = `Total ${oVal} (dist: ${oDist}) closer to 15 than ${pVal} (dist: ${pDist}) (Opponent wins)`;
     } else {
       winner = 'tie';
-      reason = `Both totals (${pVal} & ${oVal}) equidistant to 10 (${pDist}) (Arena tied)`;
+      reason = `Both totals (${pVal} & ${oVal}) equidistant to 15 (${pDist}) (Arena tied)`;
     }
   }
 
@@ -449,11 +449,11 @@ function scorePartition(
   const lSum = lowerRes.reduce((acc, c) => acc + c.resolvedValue, 0);
   const lScore = Math.max(0, (15 - lSum) / 14);
 
-  // Closest 10 score (dist 0 is best)
+  // Closest 15 score (dist 0 is best)
   const c10Res = resolveLaneCards(p.closest10, 'closest10');
   const c10Sum = c10Res.reduce((acc, c) => acc + c.resolvedValue, 0);
-  const c10Dist = Math.abs(c10Sum - 10);
-  const c10Score = Math.max(0, (6 - c10Dist) / 6);
+  const c10Dist = Math.abs(c10Sum - 15);
+  const c10Score = Math.max(0, (8 - c10Dist) / 8);
 
   let totalScore = 0;
   if (personality === 'vulcan') {
