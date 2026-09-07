@@ -41,9 +41,9 @@ export const CyberHeader: React.FC<CyberHeaderProps> = ({
               NEXUS PROTOCOL <span className="text-[#ff4d00] font-black">21</span>
             </h1>
             <div className="hidden sm:flex items-center gap-2 px-2.5 py-0.5 bg-[#1a1a1a]/5 border border-[#1a1a1a]/15 text-[10px] font-mono font-bold text-[#1a1a1a]/70 uppercase">
-              <span>ROUND 0{matchRound}</span>
+              <span>ROUND {matchRound} OF 3</span>
               <span className="text-[#ff4d00]">•</span>
-              <span>DECK 21</span>
+              <span>21 CARDS</span>
             </div>
           </div>
         </div>

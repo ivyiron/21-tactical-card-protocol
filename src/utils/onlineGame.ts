@@ -5,6 +5,7 @@ import {
   LaneType,
   PlayerHandAllocation,
   LaneEvaluation,
+  RoundEvaluation,
   MatchEvaluation,
   OnlineUser,
   IncomingChallengeData,
@@ -25,15 +26,40 @@ export interface OnlineGameCallbacks {
     p2Name: string;
     hand: Card[];
     drawPileCount: number;
+    roundNumber: number;
+    p1BankScore: number;
+    p2BankScore: number;
+    p1DoubleBet: boolean;
+    p2DoubleBet: boolean;
+    p1UsedSwap: boolean;
+    p2UsedSwap: boolean;
   }) => void;
   onOpponentAllocating?: (allocatedCount: number) => void;
-  onOpponentReady?: () => void;
-  onRevealStart?: (data: {
-    p1Allocation: PlayerHandAllocation;
-    p2Allocation: PlayerHandAllocation;
-    laneEvaluations: Record<LaneType, LaneEvaluation>;
+  onOpponentReady?: (opponentBetBox?: LaneType) => void;
+  onFirstBoxRevealed?: (data: {
+    firstBoxLane: LaneType;
+    p1FirstBoxCards: Card[];
+    p2FirstBoxCards: Card[];
+    laneEvaluation: LaneEvaluation;
+    p1BetBox: LaneType;
+    p2BetBox: LaneType;
+  }) => void;
+  onOpponentReadjusted?: () => void;
+  onRoundFinished?: (data: {
+    roundEvaluation: RoundEvaluation;
+    p1TotalBank: number;
+    p2TotalBank: number;
+    nextRoundNumber: number;
+    p1NextDoubleBet: boolean;
+    p2NextDoubleBet: boolean;
+  }) => void;
+  onMatchFinished?: (data: {
     matchEvaluation: MatchEvaluation;
-    forPlayerNumber?: 1 | 2;
+  }) => void;
+  onSwapCompleted?: (data: {
+    newHand: Card[];
+    newCardDrawn: Card;
+    remainingDeckCount: number;
   }) => void;
   onRematchOffered?: (playerNumber: 1 | 2) => void;
   onRematchStarted?: (data: { hand: Card[]; drawPileCount: number }) => void;
@@ -147,10 +173,22 @@ class OnlineGameClient {
         this.callbacks.onOpponentAllocating?.(msg.allocatedCount);
         break;
       case 'OPPONENT_READY':
-        this.callbacks.onOpponentReady?.();
+        this.callbacks.onOpponentReady?.(msg.opponentBetBox);
         break;
-      case 'REVEAL_START':
-        this.callbacks.onRevealStart?.(msg);
+      case 'FIRST_BOX_REVEALED':
+        this.callbacks.onFirstBoxRevealed?.(msg);
+        break;
+      case 'OPPONENT_READJUSTED':
+        this.callbacks.onOpponentReadjusted?.();
+        break;
+      case 'ROUND_FINISHED':
+        this.callbacks.onRoundFinished?.(msg);
+        break;
+      case 'MATCH_FINISHED':
+        this.callbacks.onMatchFinished?.(msg);
+        break;
+      case 'SWAP_COMPLETED':
+        this.callbacks.onSwapCompleted?.(msg);
         break;
       case 'REMATCH_OFFERED':
         this.callbacks.onRematchOffered?.(msg.playerNumber);
@@ -215,8 +253,29 @@ class OnlineGameClient {
     this.send({ type: 'UPDATE_ALLOCATION_PROGRESS', matchId, allocatedCount });
   }
 
-  public submitAllocation(matchId: string, allocation: PlayerHandAllocation) {
-    this.send({ type: 'SUBMIT_ALLOCATION', matchId, allocation });
+  public submitAllocation(
+    matchId: string,
+    allocation: PlayerHandAllocation,
+    betBox: LaneType,
+    reserveCard: Card
+  ) {
+    this.send({ type: 'SUBMIT_ALLOCATION', matchId, allocation, betBox, reserveCard });
+  }
+
+  public submitReadjustment(
+    matchId: string,
+    allocation: PlayerHandAllocation,
+    reserveCard: Card
+  ) {
+    this.send({ type: 'SUBMIT_READJUSTMENT', matchId, allocation, reserveCard });
+  }
+
+  public performSwap(matchId: string, cardToSwapId: string) {
+    this.send({ type: 'PERFORM_SWAP', matchId, cardToSwapId });
+  }
+
+  public nextRoundReady(matchId: string) {
+    this.send({ type: 'NEXT_ROUND_READY', matchId });
   }
 
   public requestRematch(matchId: string) {

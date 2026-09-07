@@ -41,16 +41,41 @@ export interface LaneEvaluation {
   opponentDistanceTo10?: number;
   winner: 'player' | 'opponent' | 'tie';
   reason: string;
+  isPlayerBet?: boolean;
+  isOpponentBet?: boolean;
+  playerPoints: number;        // 0, 1, or 2 (or 4 if double bet)
+  opponentPoints: number;      // 0, 1, or 2 (or 4 if double bet)
+}
+
+export interface RoundEvaluation {
+  roundNumber: number;
+  laneEvaluations: Record<LaneType, LaneEvaluation>;
+  playerRoundPoints: number;   // base box points
+  opponentRoundPoints: number;
+  tieBreakerWinner?: 'player' | 'opponent' | 'draw' | null;
+  playerBonusPoints: number;   // +1 if won round tie-break
+  opponentBonusPoints: number;
+  playerTotalRoundPoints: number;
+  opponentTotalRoundPoints: number;
+  roundWinner: 'player' | 'opponent' | 'draw';
+  playerReserveCard?: Card;
+  opponentReserveCard?: Card;
+  playerUnusedCards?: Card[];
+  opponentUnusedCards?: Card[];
+  summaryReason: string;
 }
 
 export interface MatchEvaluation {
-  playerLaneWins: number;
-  opponentLaneWins: number;
-  laneTies: number;
+  rounds: RoundEvaluation[];
+  playerBankScore: number;
+  opponentBankScore: number;
+  playerReserveCards: Card[];  // 3 unused cards in hand at match end
+  opponentReserveCards: Card[];
+  playerReserveSum: number;
+  opponentReserveSum: number;
   matchWinner: 'player' | 'opponent' | 'draw';
-  tieBreakerNeeded: boolean;
-  playerTotalSum?: number;
-  opponentTotalSum?: number;
+  settledByReserveCards: boolean;
+  tieBreakerNeeded?: boolean;
   summaryReason: string;
 }
 
@@ -60,9 +85,10 @@ export type GamePhase =
   | 'dealing'
   | 'placement'
   | 'waiting_for_opponent'
-  | 'reveal_lane_1'
-  | 'reveal_lane_2'
-  | 'reveal_lane_3'
+  | 'revealing_first_box'
+  | 'tactical_readjustment'
+  | 'revealing_remaining_boxes'
+  | 'round_ended'
   | 'reveal_tiebreaker'
   | 'match_ended';
 
@@ -94,11 +120,27 @@ export type ClientWsMessage =
   | { type: 'ACCEPT_CHALLENGE'; challengeId: string }
   | { type: 'DECLINE_CHALLENGE'; challengeId: string }
   | { type: 'CANCEL_CHALLENGE'; challengeId: string }
-  | { type: 'SUBMIT_ALLOCATION'; matchId: string; allocation: PlayerHandAllocation }
+  | {
+      type: 'SUBMIT_ALLOCATION';
+      matchId: string;
+      allocation: PlayerHandAllocation;
+      betBox: LaneType;
+      reserveCard?: Card;
+      unusedCards?: Card[];
+    }
+  | {
+      type: 'SUBMIT_READJUSTMENT';
+      matchId: string;
+      allocation: PlayerHandAllocation;
+      reserveCard?: Card;
+      unusedCards?: Card[];
+    }
+  | { type: 'PERFORM_SWAP'; matchId: string; cardToSwapId: string }
   | { type: 'UPDATE_ALLOCATION_PROGRESS'; matchId: string; allocatedCount: number }
   | { type: 'REQUEST_REMATCH'; matchId: string }
   | { type: 'SEND_EMOTE'; matchId: string; emote: string }
-  | { type: 'LEAVE_MATCH'; matchId: string };
+  | { type: 'LEAVE_MATCH'; matchId: string }
+  | { type: 'NEXT_ROUND_READY'; matchId: string };
 
 export type ServerWsMessage =
   | { type: 'USER_REGISTERED'; myId: string; nickname: string }
@@ -115,16 +157,44 @@ export type ServerWsMessage =
       p2Name: string;
       hand: Card[];
       drawPileCount: number;
+      roundNumber: number;
+      p1BankScore: number;
+      p2BankScore: number;
+      p1DoubleBet: boolean;
+      p2DoubleBet: boolean;
+      p1UsedSwap: boolean;
+      p2UsedSwap: boolean;
     }
   | { type: 'OPPONENT_ALLOCATING'; allocatedCount: number }
-  | { type: 'OPPONENT_READY' }
+  | { type: 'OPPONENT_READY'; opponentBetBox?: LaneType }
   | {
-      type: 'REVEAL_START';
-      p1Allocation: PlayerHandAllocation;
-      p2Allocation: PlayerHandAllocation;
-      laneEvaluations: Record<LaneType, LaneEvaluation>;
+      type: 'FIRST_BOX_REVEALED';
+      firstBoxLane: LaneType;
+      p1FirstBoxCards: Card[];
+      p2FirstBoxCards: Card[];
+      laneEvaluation: LaneEvaluation;
+      p1BetBox: LaneType;
+      p2BetBox: LaneType;
+    }
+  | { type: 'OPPONENT_READJUSTED' }
+  | {
+      type: 'ROUND_FINISHED';
+      roundEvaluation: RoundEvaluation;
+      p1TotalBank: number;
+      p2TotalBank: number;
+      nextRoundNumber: number;
+      p1NextDoubleBet: boolean;
+      p2NextDoubleBet: boolean;
+    }
+  | {
+      type: 'MATCH_FINISHED';
       matchEvaluation: MatchEvaluation;
-      forPlayerNumber?: 1 | 2;
+    }
+  | {
+      type: 'SWAP_COMPLETED';
+      newHand: Card[];
+      newCardDrawn: Card;
+      remainingDeckCount: number;
     }
   | { type: 'REMATCH_OFFERED'; playerNumber: 1 | 2 }
   | { type: 'REMATCH_STARTED'; hand: Card[]; drawPileCount: number }

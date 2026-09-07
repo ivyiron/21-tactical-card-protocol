@@ -150,51 +150,71 @@ export const MatchEndModal: React.FC<MatchEndModalProps> = ({
               <div className="flex items-center justify-around py-1">
                 <div className="text-center">
                   <div className="text-[10px] font-mono tracking-widest text-[#1a1a1a]/60 uppercase mb-0.5 font-bold">
-                    {gameMode === 'pass_and_play' ? 'P1 WINS' : 'YOU'}
+                    {playerName}
                   </div>
                   <div className="font-cyber font-extrabold text-3xl sm:text-4xl text-[#1a1a1a]">
-                    {evaluation.playerLaneWins}
+                    {evaluation.playerBankScore ?? evaluation.playerLaneWins}
                   </div>
-                  <div className="text-[10px] font-mono text-[#1a1a1a]/50 uppercase">Won Arenas</div>
+                  <div className="text-[10px] font-mono text-[#1a1a1a]/50 uppercase">Bank Points</div>
                 </div>
 
                 <div className="h-10 w-px bg-[#1a1a1a]/20" />
 
                 <div className="text-center">
                   <div className="text-[10px] font-mono tracking-widest text-[#1a1a1a]/60 uppercase mb-0.5 font-bold">
-                    TIES
+                    ROUNDS
                   </div>
-                  <div className="font-cyber font-extrabold text-3xl sm:text-4xl text-[#1a1a1a]/40">
-                    {evaluation.laneTies}
+                  <div className="font-cyber font-extrabold text-3xl sm:text-4xl text-[#1a1a1a]/70">
+                    3
                   </div>
-                  <div className="text-[10px] font-mono text-[#1a1a1a]/50 uppercase">Tied Arenas</div>
+                  <div className="text-[10px] font-mono text-[#1a1a1a]/50 uppercase">Completed</div>
                 </div>
 
                 <div className="h-10 w-px bg-[#1a1a1a]/20" />
 
                 <div className="text-center">
                   <div className="text-[10px] font-mono tracking-widest text-[#1a1a1a]/60 uppercase mb-0.5 font-bold">
-                    {gameMode === 'pass_and_play' ? 'P2 WINS' : 'OPPONENT'}
+                    {opponentName}
                   </div>
                   <div className="font-cyber font-extrabold text-3xl sm:text-4xl text-[#ff4d00]">
-                    {evaluation.opponentLaneWins}
+                    {evaluation.opponentBankScore ?? evaluation.opponentLaneWins}
                   </div>
-                  <div className="text-[10px] font-mono text-[#1a1a1a]/50 uppercase">Won Arenas</div>
+                  <div className="text-[10px] font-mono text-[#1a1a1a]/50 uppercase">Bank Points</div>
                 </div>
               </div>
 
-              {/* Tie-breaker detail if triggered */}
+              {/* 3 Rounds breakdown if available */}
+              {evaluation.rounds && evaluation.rounds.length > 0 && (
+                <div className="mt-2 border-t border-[#1a1a1a]/15 pt-2 text-[10px] font-mono space-y-1">
+                  <div className="font-bold text-[#1a1a1a]/70 uppercase">Round Progression:</div>
+                  {evaluation.rounds.map((r, i) => (
+                    <div key={`round-score-${i}`} className="flex items-center justify-between px-2 py-0.5 bg-white border border-[#1a1a1a]/15">
+                      <span className="font-bold">ROUND {r.roundNumber || i + 1}</span>
+                      <span>
+                        {playerName}: <strong className="text-[#1a1a1a]">{r.playerTotalRoundPoints} pts</strong> vs {opponentName}: <strong className="text-[#ff4d00]">{r.opponentTotalRoundPoints} pts</strong>
+                      </span>
+                      <span className={`font-bold uppercase ${
+                        r.roundWinner === 'player' ? 'text-[#1a1a1a]' : r.roundWinner === 'opponent' ? 'text-[#ff4d00]' : 'text-neutral-500'
+                      }`}>
+                        {r.roundWinner === 'player' ? 'WON' : r.roundWinner === 'opponent' ? 'LOST' : 'DRAW'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Reserve cards tie-breaker detail if triggered */}
               {evaluation.tieBreakerNeeded && (
-                <div className="mt-3 p-3 bg-[#f8f7f4] border-2 border-[#1a1a1a] text-xs font-mono flex items-center justify-between shadow-[2px_2px_0_#1a1a1a]">
+                <div className="mt-3 p-3 bg-white border-2 border-[#1a1a1a] text-xs font-mono flex items-center justify-between shadow-[2px_2px_0_#1a1a1a]">
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-[#ff4d00] shrink-0" />
                     <div className="text-left">
                       <span className="font-cyber font-black uppercase text-[#1a1a1a] block text-[11px] tracking-wider">
-                        TIE-BREAKER PROTOCOL (1–1 STALEMATE)
+                        3 RESERVE CARDS TIE-BREAKER PROTOCOL
                       </span>
                       <span className="text-[#1a1a1a]/70 text-[11px]">
-                        5-Card Total: <strong className="text-[#1a1a1a]">{evaluation.playerTotalSum} pts</strong> vs{' '}
-                        <strong className="text-[#ff4d00]">{evaluation.opponentTotalSum} pts</strong>
+                        Reserve Sum: <strong className="text-[#1a1a1a]">{evaluation.playerReserveSum ?? evaluation.playerTotalSum} pts</strong> vs{' '}
+                        <strong className="text-[#ff4d00]">{evaluation.opponentReserveSum ?? evaluation.opponentTotalSum} pts</strong>
                       </span>
                     </div>
                   </div>

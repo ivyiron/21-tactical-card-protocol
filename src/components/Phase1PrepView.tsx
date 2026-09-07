@@ -7,6 +7,7 @@ interface Phase1PrepViewProps {
   onReady: () => void;
   isDealing: boolean;
   roundNumber: number;
+  carriedOverCount?: number;
   playerName: string;
   opponentName: string;
   gameMode: 'vs_ai' | 'online';
@@ -18,6 +19,7 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
   onReady,
   isDealing,
   roundNumber,
+  carriedOverCount = 0,
   playerName,
   opponentName,
   gameMode,
@@ -33,7 +35,7 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
       <div className="relative z-10 flex items-center gap-2 px-3 py-1 bg-white border border-[#1a1a1a] shadow-[2px_2px_0_#1a1a1a] mb-6">
         <span className="w-2.5 h-2.5 bg-[#ff4d00] animate-pulse" />
         <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-[#1a1a1a]">
-          PHASE 1: COMBAT PREPARATION &amp; CARD DISPATCH
+          Let the battle begin
         </span>
       </div>
 
@@ -65,8 +67,8 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-[9px] font-mono text-white/60 border-t border-white/20 pt-1">
-              <span>5 CARDS/UNIT</span>
-              <span>1X MORPH</span>
+              <span>6 CARDS DEAL</span>
+              <span>{carriedOverCount > 0 ? `+${carriedOverCount} CARRYOVER` : 'CARRYOVER ON'}</span>
             </div>
           </motion.div>
         </div>
@@ -75,18 +77,18 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
         <AnimatePresence>
           {isDealing && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-              {[0, 1, 2, 3, 4].map((i) => (
+              {[0, 1, 2, 3, 4, 5].map((i) => (
                 <motion.div
                   key={`deal-card-${i}`}
                   initial={{ x: 0, y: 0, scale: 0.8, opacity: 1, rotate: 0 }}
                   animate={{
-                    x: (i - 2) * 60,
+                    x: (i - 2.5) * 55,
                     y: 180,
                     scale: 1,
                     opacity: 0,
-                    rotate: (i - 2) * 8,
+                    rotate: (i - 2.5) * 7,
                   }}
-                  transition={{ duration: 0.8, delay: i * 0.12, ease: 'easeOut' }}
+                  transition={{ duration: 0.8, delay: i * 0.1, ease: 'easeOut' }}
                   className="absolute w-20 h-28 bg-white border-2 border-[#1a1a1a] shadow-[4px_4px_0_#ff4d00]"
                 />
               ))}
@@ -108,7 +110,7 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
     </span>
   </div>
 
-  {/* VS - luôn chính giữa màn hình */}
+  {/* VS - Centered Display */}
   <div className="px-3 py-1 bg-[#1a1a1a] text-[#ff4d00] font-mono font-black text-xs whitespace-nowrap">
     VS
   </div>
@@ -144,19 +146,23 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
         >
           {isDealing ? (
             <>
-              <Sparkles className="w-5 h-5 animate-spin" />
-              <span>DISPATCHING 5 CARDS...</span>
+              <Sparkles className="w-5 h-5" />
+              <span>DISPATCHING 6 CARDS...</span>
             </>
           ) : (
             <>
               <Play className="w-5 h-5 fill-current" />
-              <span>READY // DEAL 5 CARDS</span>
+              <span>
+                {carriedOverCount > 0
+                  ? `PLAY / READY `
+                  : `PLAY / READY `}
+              </span>
             </>
           )}
         </button>
 
         <span className="text-[10px] font-mono text-[#1a1a1a]/60 uppercase tracking-wider mt-1">
-          ROUND {roundNumber < 10 ? `0${roundNumber}` : roundNumber} • 21-CARD INDUSTRIAL CYBER DECK
+           3 ROUNDS • DEPLOY 5 ON DESK • UNUSED CARDS CARRY OVER
         </span>
       </div>
     </div>

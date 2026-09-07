@@ -18,6 +18,14 @@ interface LaneDropZoneProps {
   onCardRemove?: (card: Card) => void;
   isPlacementActive?: boolean;
   selectedCardId?: string | null;
+  // Betting and 3-round protocol extensions
+  isPlayerBet?: boolean;
+  isOpponentBet?: boolean;
+  isPlayerDoubleBet?: boolean;
+  isOpponentDoubleBet?: boolean;
+  isBetSelectable?: boolean;
+  onSelectBet?: () => void;
+  isFirstRevealedBox?: boolean;
 }
 
 export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
@@ -34,6 +42,13 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
   onCardRemove,
   isPlacementActive = false,
   selectedCardId = null,
+  isPlayerBet = false,
+  isOpponentBet = false,
+  isPlayerDoubleBet = false,
+  isOpponentDoubleBet = false,
+  isBetSelectable = false,
+  onSelectBet,
+  isFirstRevealedBox = false,
 }) => {
   const isFilled = playerCards.length === requiredCount;
 
@@ -46,24 +61,24 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
     borderColor: string;
   }> = {
     higher: {
-      duelTag: 'Duel 01',
+      duelTag: 'BOX 01',
       title: 'Maxima',
-      subtitle: 'High Card Wins • Slot 1/1',
-      ruleDetail: 'Higher card value claims the arena. Chameleon X resolves as 10.',
+      subtitle: 'High Card Wins • 1 Card',
+      ruleDetail: 'Higher card value claims the box. Chameleon X resolves as 10.',
       borderColor: 'border-[#ff4d00]',
     },
     lower: {
-      duelTag: 'Duel 02',
+      duelTag: 'BOX 02',
       title: 'Minima',
-      subtitle: 'Low Total Wins • Slot 2/2',
-      ruleDetail: 'Lower 2-card sum claims the arena. Chameleon X resolves as 0.',
+      subtitle: 'Low Total Wins • 2 Cards',
+      ruleDetail: 'Lower 2-card sum claims the box. Chameleon X resolves as 0.',
       borderColor: 'border-[#1a1a1a]/40',
     },
     closest10: {
-      duelTag: 'Duel 03',
+      duelTag: 'BOX 03',
       title: 'Proxima',
-      subtitle: 'Near 10 Wins • Slot 2/2',
-      ruleDetail: 'Pair closest to a sum of 10 wins. Chameleon X resolves to 0 or 10.',
+      subtitle: 'Near 10 Wins • 2 Cards',
+      ruleDetail: 'Pair closest to sum of 10 wins. Chameleon X resolves to 0 or 10.',
       borderColor: 'border-[#ff4d00]',
     },
   };
@@ -95,6 +110,12 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
     ? 'bg-[#d4d4d8] text-[#18181b] border-2 border-[#52525b] shadow-[5px_5px_0_#52525b]'
     : isTie
     ? 'bg-[#f4f4f5] text-[#18181b] border-2 border-[#1a1a1a] shadow-[4px_4px_0_#1a1a1a]'
+    : isPlayerBet && isPlayerDoubleBet
+    ? 'bg-white text-[#1a1a1a] border-2 border-[#ff4d00] ring-2 ring-yellow-400 shadow-[6px_6px_0_#ff4d00]'
+    : isPlayerBet
+    ? 'bg-white text-[#1a1a1a] border-2 border-[#ff4d00] shadow-[5px_5px_0_#ff4d00]'
+    : isOpponentBet
+    ? 'bg-[#f8f7f4] text-[#1a1a1a] border-2 border-[#1a1a1a] shadow-[4px_4px_0_#ff4d00]'
     : 'bg-[#f8f7f4] text-[#1a1a1a] border-2 border-[#1a1a1a] shadow-[4px_4px_0_rgba(26,26,26,0.1)]';
 
   return (
@@ -105,36 +126,77 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
         }
       }}
       className={`relative transition-all duration-200 flex flex-col justify-between p-3.5 sm:p-4 ${containerBgClasses} ${
-        isCurrentRevealLane ? 'ring-4 ring-[#ff4d00] animate-suspense' : ''
+        isCurrentRevealLane || isFirstRevealedBox ? 'ring-4 ring-[#ff4d00] animate-suspense' : ''
       } ${
         isPlacementActive && selectedCardId && !isFilled
           ? 'cursor-pointer hover:border-[#ff4d00] hover:bg-white'
           : ''
       }`}
     >
-      {/* Prominent Win/Loss/Tie Badge in top-right */}
-      {isRevealed && evaluation && (
-        <div
-          className={`absolute top-2.5 right-2.5 px-2.5 py-1 font-cyber font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-[2px_2px_0_rgba(0,0,0,0.3)] ${
-            isPlayerWin
-              ? 'bg-[#1a1a1a] text-[#ff4d00] border-2 border-white'
-              : isOpponentWin
-              ? 'bg-[#52525b] text-white border-2 border-[#27272a]'
-              : 'bg-[#1a1a1a] text-white border-2 border-white'
-          }`}
-        >
-          {isPlayerWin && <span className="w-2 h-2 rounded-full bg-[#ff4d00] animate-ping" />}
-          <span>
-            {isPlayerWin ? '★ WIN BOX' : isOpponentWin ? 'LOSE BOX' : 'TIED'}
-          </span>
-        </div>
-      )}
+      {/* Top-Right Badges: Result Badge & OPPONENT BET strictly at top */}
+      <div className="absolute top-2.5 right-2.5 flex flex-wrap items-center justify-end gap-1.5 z-20 max-w-[65%]">
+        {/* 1. Win/Loss/Points Result Badge (When Revealed) */}
+        {isRevealed && evaluation && (
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className={`px-2.5 py-1 font-cyber font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-[2px_2px_0_rgba(0,0,0,0.3)] ${
+              isPlayerWin
+                ? evaluation.playerPoints === 4
+                  ? 'bg-[#1a1a1a] text-yellow-300 border-2 border-yellow-400 ring-2 ring-yellow-400/60 shadow-[0_0_12px_rgba(250,204,21,0.6)] animate-pulse'
+                  : 'bg-[#1a1a1a] text-[#ff4d00] border-2 border-white'
+                : isOpponentWin
+                ? evaluation.opponentPoints === 4
+                  ? 'bg-[#1a1a1a] text-yellow-400 border-2 border-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.4)]'
+                  : 'bg-[#52525b] text-white border-2 border-[#27272a]'
+                : 'bg-[#1a1a1a] text-white border-2 border-white'
+            }`}
+          >
+            {isPlayerWin && (
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  evaluation.playerPoints === 4 ? 'bg-yellow-300 animate-ping' : 'bg-[#ff4d00] animate-ping'
+                }`}
+              />
+            )}
+            <span>
+              {isPlayerWin
+                ? evaluation.playerPoints === 4
+                  ? '★ 2X CATCH-UP (+4 PTS)'
+                  : evaluation.playerPoints === 2
+                  ? '★ BET WIN (+2 PTS)'
+                  : '★ ARENA WIN (+1 PT)'
+                : isOpponentWin
+                ? evaluation.opponentPoints === 4
+                  ? 'LOSE (OPP +4 PTS)'
+                  : evaluation.opponentPoints === 2
+                  ? 'LOSE (OPP +2 PTS)'
+                  : 'LOSE (OPP +1 PT)'
+                : 'TIED (+0 PTS)'}
+            </span>
+          </motion.div>
+        )}
+
+        {/* 2. Opponent Bet Badge (Strictly Top-Aligned to eliminate overlap) */}
+        {isOpponentBet && (
+          <div
+            className={`px-2 py-0.5 border-2 font-mono font-black text-[10px] uppercase tracking-wider shadow-[2px_2px_0_#1a1a1a] flex items-center gap-1 ${
+              isOpponentDoubleBet
+                ? 'bg-[#1a1a1a] text-yellow-300 border-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.5)] animate-pulse'
+                : 'bg-[#1a1a1a] text-[#ff4d00] border-[#ff4d00]'
+            }`}
+          >
+            <Target className="w-3 h-3 text-[#ff4d00]" />
+            <span>{isOpponentDoubleBet ? 'OPP 2xBet (+4)' : 'OPP BET (+2)'}</span>
+          </div>
+        )}
+      </div>
 
       {/* Header bar matching Industrial Arena */}
       <div className={`relative z-10 flex flex-col text-left pb-2 border-b ${
         isPlayerWin ? 'border-white/30' : isOpponentWin ? 'border-[#71717a]/30' : 'border-[#1a1a1a]/10'
       }`}>
-        <div className="flex items-center justify-between pr-24">
+        <div className="flex items-center justify-between pr-24 sm:pr-32">
           <div className="flex items-center gap-2">
             <span className={`font-mono text-[9px] uppercase tracking-wider font-black px-2 py-0.5 border ${
               isPlayerWin
@@ -150,6 +212,11 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
             }`}>
               {config.title}
             </h3>
+            {isFirstRevealedBox && (
+              <span className="px-2 py-0.5 bg-[#ff4d00] text-white font-mono font-bold text-[9px] uppercase tracking-wider">
+                FIRST FLIP
+              </span>
+            )}
           </div>
         </div>
         <span className={`font-mono text-[10px] uppercase tracking-wider mt-1 ${
@@ -271,24 +338,83 @@ export const LaneDropZone: React.FC<LaneDropZoneProps> = ({
             }`}>
               {evaluation.reason}
             </div>
+
+            {/* Score & Multiplier Points Breakdown */}
+            <div className="w-full flex items-center justify-between text-[10px] font-mono px-2 py-1 bg-[#1a1a1a]/5 border border-[#1a1a1a]/10">
+              <span className={`font-black ${evaluation.playerPoints > 0 ? 'text-[#ff4d00]' : 'text-[#1a1a1a]/60'}`}>
+                YOU: +{evaluation.playerPoints} PTS
+                {isPlayerBet && (isPlayerDoubleBet ? ' (⚡2X BET)' : ' (🎯BET)')}
+              </span>
+              <span className={`font-black ${evaluation.opponentPoints > 0 ? 'text-[#ff4d00]' : 'text-[#1a1a1a]/60'}`}>
+                OPP: +{evaluation.opponentPoints} PTS
+                {isOpponentBet && (isOpponentDoubleBet ? ' (⚡2X BET)' : ' (🎯BET)')}
+              </span>
+            </div>
           </motion.div>
         )}
 
         {/* Player Row */}
-        <div className="flex flex-col items-center">
-          <div className={`text-[10px] font-mono tracking-wider mb-1 flex items-center gap-1.5 font-bold ${
+        <div className="flex flex-col items-center w-full">
+          <div className={`text-[10px] font-mono tracking-wider mb-1 flex items-center justify-between w-full font-bold ${
             isPlayerWin ? 'text-white' : 'text-[#1a1a1a]/70'
           }`}>
-            <span className={isPlayerWin ? 'text-white font-black' : 'text-[#1a1a1a]'}>
-              COMMANDER
-            </span>
-            {isRevealed && evaluation && (
-              <span className={`font-mono font-bold ${isPlayerWin ? 'text-white/90' : 'text-[#1a1a1a]'}`}>
-                {type === 'closest10'
-                  ? `[Sum: ${evaluation.playerScoreValue} | Dist: ${evaluation.playerDistanceTo10}]`
-                  : `[Score: ${evaluation.playerScoreValue}]`}
+            <div className="flex items-center gap-1.5">
+              <span className={isPlayerWin ? 'text-white font-black' : 'text-[#1a1a1a]'}>
+                COMMANDER
               </span>
-            )}
+              {isRevealed && evaluation && (
+                <span className={`font-mono font-bold ${isPlayerWin ? 'text-white/90' : 'text-[#1a1a1a]'}`}>
+                  {type === 'closest10'
+                    ? `[Sum: ${evaluation.playerScoreValue} | Dist: ${evaluation.playerDistanceTo10}]`
+                    : `[Score: ${evaluation.playerScoreValue}]`}
+                </span>
+              )}
+            </div>
+
+            {/* YOUR BET BADGE OR SELECTOR (STRICTLY AT BOTTOM TO ELIMINATE OVERLAP) */}
+            <div className="flex items-center gap-1">
+              {!isRevealed && isBetSelectable ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectBet?.();
+                  }}
+                  className={`px-2 py-0.5 text-[10px] font-mono font-black uppercase tracking-wider border-2 transition-all cursor-pointer shadow-[2px_2px_0_#1a1a1a] flex items-center gap-1 ${
+                    isPlayerBet
+                      ? isPlayerDoubleBet
+                        ? 'bg-[#ff4d00] text-yellow-300 border-[#1a1a1a] ring-1 ring-yellow-400 shadow-[0_0_8px_rgba(255,77,0,0.8)] animate-pulse'
+                        : 'bg-[#ff4d00] text-white border-[#1a1a1a]'
+                      : isPlayerDoubleBet
+                      ? 'bg-yellow-400 hover:bg-[#ff4d00] text-[#1a1a1a] hover:text-white border-[#1a1a1a] animate-pulse'
+                      : 'bg-white hover:bg-[#ff4d00] hover:text-white text-[#1a1a1a] border-[#1a1a1a]'
+                  }`}
+                  title={isPlayerDoubleBet ? 'Select 2xBet target (+4 PTS)' : 'Select Bet target (+2 PTS)'}
+                >
+                  <Target className="w-3 h-3" />
+                  <span>
+                    {isPlayerBet
+                      ? isPlayerDoubleBet
+                        ? 'YOUR 2xBet (+4)'
+                        : 'YOUR BET (+2)'
+                      : isPlayerDoubleBet
+                      ? '2xBet (+4)'
+                      : 'BET (+2)'}
+                  </span>
+                </button>
+              ) : isPlayerBet ? (
+                <div
+                  className={`px-2 py-0.5 border font-mono font-black text-[10px] uppercase tracking-wider shadow-[1px_1px_0_#1a1a1a] flex items-center gap-1 ${
+                    isPlayerDoubleBet
+                      ? 'bg-[#ff4d00] text-yellow-300 border-yellow-300 ring-1 ring-yellow-400'
+                      : 'bg-[#ff4d00] text-white border-[#1a1a1a]'
+                  }`}
+                >
+                  <Target className="w-3 h-3" />
+                  <span>{isPlayerDoubleBet ? 'YOUR 2xBet (+4)' : 'YOUR BET (+2)'}</span>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-center justify-center gap-2 sm:gap-2.5 min-h-[96px] sm:min-h-[112px]">

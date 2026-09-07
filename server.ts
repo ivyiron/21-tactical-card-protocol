@@ -3,8 +3,25 @@ import http from 'http';
 import path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-import { Card, LaneType, PlayerHandAllocation, LaneEvaluation, MatchEvaluation, ClientWsMessage, ServerWsMessage, OnlineUser } from './src/types';
-import { createDeck, shuffleDeck, evaluateLane, evaluateMatch } from './src/utils/deck';
+import {
+  Card,
+  LaneType,
+  PlayerHandAllocation,
+  LaneEvaluation,
+  RoundEvaluation,
+  MatchEvaluation,
+  ClientWsMessage,
+  ServerWsMessage,
+  OnlineUser,
+} from './src/types';
+import {
+  createDeck,
+  shuffleDeck,
+  evaluateLane,
+  determineFirstRevealLane,
+  evaluateRound,
+  evaluate3RoundMatch,
+} from './src/utils/deck';
 
 const app = express();
 const server = http.createServer(app);
@@ -25,15 +42,33 @@ interface ActiveMatch {
   id: string;
   p1Id: string;
   p2Id: string;
+  roundNumber: number;
+  p1Deck: Card[];
+  p2Deck: Card[];
   p1Hand: Card[];
   p2Hand: Card[];
   p1Allocation?: PlayerHandAllocation;
   p2Allocation?: PlayerHandAllocation;
+  p1BetBox?: LaneType;
+  p2BetBox?: LaneType;
+  p1ReserveCard?: Card;
+  p2ReserveCard?: Card;
   p1Ready: boolean;
   p2Ready: boolean;
-  state: 'placement' | 'revealed';
+  p1Readjusted: boolean;
+  p2Readjusted: boolean;
+  firstBoxLane?: LaneType;
+  p1BankScore: number;
+  p2BankScore: number;
+  p1DoubleBet: boolean;
+  p2DoubleBet: boolean;
+  p1UsedSwap: boolean;
+  p2UsedSwap: boolean;
+  p1ReserveCards: Card[];
+  p2ReserveCards: Card[];
+  rounds: RoundEvaluation[];
+  state: 'placement' | 'first_revealed' | 'round_ended' | 'match_ended';
   rematchVotes: Set<1 | 2>;
-  drawPile: Card[];
   createdAt: number;
 }
 
@@ -71,24 +106,91 @@ function broadcastOnlineUsers() {
   }
 }
 
+function dealRound(match: ActiveMatch, roundNum: number) {
+  match.roundNumber = roundNum;
+  match.p1Ready = false;
+  match.p2Ready = false;
+  match.p1Readjusted = false;
+  match.p2Readjusted = false;
+  match.p1BetBox = undefined;
+  match.p2BetBox = undefined;
+  match.p1ReserveCard = undefined;
+  match.p2ReserveCard = undefined;
+  match.state = 'placement';
+
+  // Calculate carried-over cards from the previous round (cards in hand not deployed into boxes)
+  let p1CarriedOver: Card[] = [];
+  let p2CarriedOver: Card[] = [];
+
+  if (match.p1Allocation) {
+    const p1UsedIds = new Set([
+      ...match.p1Allocation.higher.map(c => c.id),
+      ...match.p1Allocation.lower.map(c => c.id),
+      ...match.p1Allocation.closest10.map(c => c.id),
+    ]);
+    p1CarriedOver = match.p1Hand.filter(c => !p1UsedIds.has(c.id));
+  }
+
+  if (match.p2Allocation) {
+    const p2UsedIds = new Set([
+      ...match.p2Allocation.higher.map(c => c.id),
+      ...match.p2Allocation.lower.map(c => c.id),
+      ...match.p2Allocation.closest10.map(c => c.id),
+    ]);
+    p2CarriedOver = match.p2Hand.filter(c => !p2UsedIds.has(c.id));
+  }
+
+  // Clear allocations for new round
+  match.p1Allocation = undefined;
+  match.p2Allocation = undefined;
+
+  // Deal 6 new cards to each player from their deck and append to carried-over cards
+  const p1NewDeal = match.p1Deck.slice(0, 6);
+  match.p1Deck = match.p1Deck.slice(6);
+  match.p1Hand = [...p1CarriedOver, ...p1NewDeal];
+
+  const p2NewDeal = match.p2Deck.slice(0, 6);
+  match.p2Deck = match.p2Deck.slice(6);
+  match.p2Hand = [...p2CarriedOver, ...p2NewDeal];
+}
+
 function startMatchBetween(p1: ConnectedPlayer, p2: ConnectedPlayer, isRematch = false, existingMatchId?: string) {
   const matchId = existingMatchId || `match_${Math.random().toString(36).substring(2, 9)}`;
-  const deck = shuffleDeck(createDeck());
-  const p1Hand = deck.slice(0, 5);
-  const p2Hand = deck.slice(5, 10);
-  const remaining = deck.slice(10);
+
+  // Each player gets a full 21-card deck
+  const p1Deck = shuffleDeck(createDeck());
+  const p2Deck = shuffleDeck(createDeck());
+
+  const p1Hand = p1Deck.slice(0, 6);
+  const p1Remaining = p1Deck.slice(6);
+
+  const p2Hand = p2Deck.slice(0, 6);
+  const p2Remaining = p2Deck.slice(6);
 
   const match: ActiveMatch = {
     id: matchId,
     p1Id: p1.id,
     p2Id: p2.id,
+    roundNumber: 1,
+    p1Deck: p1Remaining,
+    p2Deck: p2Remaining,
     p1Hand,
     p2Hand,
     p1Ready: false,
     p2Ready: false,
+    p1Readjusted: false,
+    p2Readjusted: false,
+    p1BankScore: 0,
+    p2BankScore: 0,
+    p1DoubleBet: false,
+    p2DoubleBet: false,
+    p1UsedSwap: false,
+    p2UsedSwap: false,
+    p1ReserveCards: [],
+    p2ReserveCards: [],
+    rounds: [],
     state: 'placement',
     rematchVotes: new Set(),
-    drawPile: remaining,
     createdAt: Date.now(),
   };
 
@@ -104,38 +206,39 @@ function startMatchBetween(p1: ConnectedPlayer, p2: ConnectedPlayer, isRematch =
 
   broadcastOnlineUsers();
 
-  if (isRematch) {
-    sendWs(p1.ws, {
-      type: 'REMATCH_STARTED',
-      hand: p1Hand,
-      drawPileCount: remaining.length,
-    });
-    sendWs(p2.ws, {
-      type: 'REMATCH_STARTED',
-      hand: p2Hand,
-      drawPileCount: remaining.length,
-    });
-  } else {
-    sendWs(p1.ws, {
-      type: 'MATCH_START',
-      matchId,
-      playerNumber: 1,
-      p1Name: p1.nickname,
-      p2Name: p2.nickname,
-      hand: p1Hand,
-      drawPileCount: remaining.length,
-    });
+  sendWs(p1.ws, {
+    type: 'MATCH_START',
+    matchId,
+    playerNumber: 1,
+    p1Name: p1.nickname,
+    p2Name: p2.nickname,
+    hand: p1Hand,
+    drawPileCount: p1Remaining.length,
+    roundNumber: 1,
+    p1BankScore: 0,
+    p2BankScore: 0,
+    p1DoubleBet: false,
+    p2DoubleBet: false,
+    p1UsedSwap: false,
+    p2UsedSwap: false,
+  });
 
-    sendWs(p2.ws, {
-      type: 'MATCH_START',
-      matchId,
-      playerNumber: 2,
-      p1Name: p1.nickname,
-      p2Name: p2.nickname,
-      hand: p2Hand,
-      drawPileCount: remaining.length,
-    });
-  }
+  sendWs(p2.ws, {
+    type: 'MATCH_START',
+    matchId,
+    playerNumber: 2,
+    p1Name: p1.nickname,
+    p2Name: p2.nickname,
+    hand: p2Hand,
+    drawPileCount: p2Remaining.length,
+    roundNumber: 1,
+    p1BankScore: 0,
+    p2BankScore: 0,
+    p1DoubleBet: false,
+    p2DoubleBet: false,
+    p1UsedSwap: false,
+    p2UsedSwap: false,
+  });
 }
 
 // Attach WebSocket server
@@ -333,6 +436,63 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
 
+        case 'PERFORM_SWAP': {
+          if (!playerId) return;
+          const match = matches.get(msg.matchId);
+          if (!match) return;
+
+          const isP1 = match.p1Id === playerId;
+          const usedSwap = isP1 ? match.p1UsedSwap : match.p2UsedSwap;
+          const currentHand = isP1 ? match.p1Hand : match.p2Hand;
+          const currentDeck = isP1 ? match.p1Deck : match.p2Deck;
+
+          if (usedSwap) {
+            sendWs(ws, { type: 'ERROR', message: 'You have already used your 1-time swap for this match!' });
+            return;
+          }
+
+          if (currentDeck.length === 0) {
+            sendWs(ws, { type: 'ERROR', message: 'No cards remaining in your unused deck to swap!' });
+            return;
+          }
+
+          const cardIdx = currentHand.findIndex(c => c.id === msg.cardToSwapId);
+          if (cardIdx === -1) {
+            sendWs(ws, { type: 'ERROR', message: 'Selected card not found in hand!' });
+            return;
+          }
+
+          // Randomly draw 1 card from unused deck
+          const randDeckIdx = Math.floor(Math.random() * currentDeck.length);
+          const drawnCard = currentDeck[randDeckIdx];
+          const swappedCard = currentHand[cardIdx];
+
+          // Replace in hand and put old card back into deck
+          const newHand = [...currentHand];
+          newHand[cardIdx] = drawnCard;
+
+          const newDeck = currentDeck.filter((_, idx) => idx !== randDeckIdx);
+          newDeck.push(swappedCard);
+
+          if (isP1) {
+            match.p1Hand = newHand;
+            match.p1Deck = newDeck;
+            match.p1UsedSwap = true;
+          } else {
+            match.p2Hand = newHand;
+            match.p2Deck = newDeck;
+            match.p2UsedSwap = true;
+          }
+
+          sendWs(ws, {
+            type: 'SWAP_COMPLETED',
+            newHand,
+            newCardDrawn: drawnCard,
+            remainingDeckCount: newDeck.length,
+          });
+          break;
+        }
+
         case 'SUBMIT_ALLOCATION': {
           if (!playerId) return;
           const match = matches.get(msg.matchId);
@@ -341,68 +501,340 @@ wss.on('connection', (ws: WebSocket) => {
           const isP1 = match.p1Id === playerId;
           if (isP1) {
             match.p1Allocation = msg.allocation;
+            match.p1BetBox = msg.betBox;
+            match.p1ReserveCard = msg.reserveCard;
             match.p1Ready = true;
           } else {
             match.p2Allocation = msg.allocation;
+            match.p2BetBox = msg.betBox;
+            match.p2ReserveCard = msg.reserveCard;
             match.p2Ready = true;
           }
 
           const opponentId = isP1 ? match.p2Id : match.p1Id;
           const opponent = players.get(opponentId);
           if (opponent) {
-            sendWs(opponent.ws, { type: 'OPPONENT_READY' });
+            sendWs(opponent.ws, {
+              type: 'OPPONENT_READY',
+              opponentBetBox: isP1 ? match.p1BetBox : match.p2BetBox,
+            });
           }
 
-          // When both players lock their placements
-          if (match.p1Ready && match.p2Ready && match.p1Allocation && match.p2Allocation) {
-            match.state = 'revealed';
+          // When both players lock their placements and bets
+          if (
+            match.p1Ready &&
+            match.p2Ready &&
+            match.p1Allocation &&
+            match.p2Allocation &&
+            match.p1BetBox &&
+            match.p2BetBox
+          ) {
+            // Determine first box to reveal
+            const firstLane = determineFirstRevealLane(match.p1BetBox, match.p2BetBox);
+            match.firstBoxLane = firstLane;
+            match.state = 'first_revealed';
+            match.p1Readjusted = false;
+            match.p2Readjusted = false;
 
-            // Evaluations from Player 1's perspective (P1 = player, P2 = opponent)
-            const p1Higher = evaluateLane(match.p1Allocation.higher, match.p2Allocation.higher, 'higher');
-            const p1Lower = evaluateLane(match.p1Allocation.lower, match.p2Allocation.lower, 'lower');
-            const p1Closest10 = evaluateLane(match.p1Allocation.closest10, match.p2Allocation.closest10, 'closest10');
+            // First box evaluation from P1's perspective
+            const p1FirstEval = evaluateLane(
+              match.p1Allocation[firstLane],
+              match.p2Allocation[firstLane],
+              firstLane,
+              match.p1BetBox === firstLane,
+              match.p2BetBox === firstLane,
+              match.p1DoubleBet,
+              match.p2DoubleBet
+            );
 
-            const p1LaneEvals: Record<LaneType, LaneEvaluation> = {
-              higher: p1Higher,
-              lower: p1Lower,
-              closest10: p1Closest10,
-            };
-            const p1MatchEval = evaluateMatch(p1LaneEvals);
-
-            // Evaluations from Player 2's perspective (P2 = player, P1 = opponent)
-            const p2Higher = evaluateLane(match.p2Allocation.higher, match.p1Allocation.higher, 'higher');
-            const p2Lower = evaluateLane(match.p2Allocation.lower, match.p1Allocation.lower, 'lower');
-            const p2Closest10 = evaluateLane(match.p2Allocation.closest10, match.p1Allocation.closest10, 'closest10');
-
-            const p2LaneEvals: Record<LaneType, LaneEvaluation> = {
-              higher: p2Higher,
-              lower: p2Lower,
-              closest10: p2Closest10,
-            };
-            const p2MatchEval = evaluateMatch(p2LaneEvals);
+            // First box evaluation from P2's perspective
+            const p2FirstEval = evaluateLane(
+              match.p2Allocation[firstLane],
+              match.p1Allocation[firstLane],
+              firstLane,
+              match.p2BetBox === firstLane,
+              match.p1BetBox === firstLane,
+              match.p2DoubleBet,
+              match.p1DoubleBet
+            );
 
             const p1 = players.get(match.p1Id);
             const p2 = players.get(match.p2Id);
 
             if (p1) {
               sendWs(p1.ws, {
-                type: 'REVEAL_START',
-                p1Allocation: match.p1Allocation,
-                p2Allocation: match.p2Allocation,
-                laneEvaluations: p1LaneEvals,
-                matchEvaluation: p1MatchEval,
-                forPlayerNumber: 1,
+                type: 'FIRST_BOX_REVEALED',
+                firstBoxLane: firstLane,
+                p1FirstBoxCards: match.p1Allocation[firstLane],
+                p2FirstBoxCards: match.p2Allocation[firstLane],
+                laneEvaluation: p1FirstEval,
+                p1BetBox: match.p1BetBox,
+                p2BetBox: match.p2BetBox,
               });
             }
 
             if (p2) {
               sendWs(p2.ws, {
-                type: 'REVEAL_START',
-                p1Allocation: match.p1Allocation,
-                p2Allocation: match.p2Allocation,
-                laneEvaluations: p2LaneEvals,
-                matchEvaluation: p2MatchEval,
-                forPlayerNumber: 2,
+                type: 'FIRST_BOX_REVEALED',
+                firstBoxLane: firstLane,
+                p1FirstBoxCards: match.p1Allocation[firstLane],
+                p2FirstBoxCards: match.p2Allocation[firstLane],
+                laneEvaluation: p2FirstEval,
+                p1BetBox: match.p1BetBox,
+                p2BetBox: match.p2BetBox,
+              });
+            }
+          }
+          break;
+        }
+
+        case 'SUBMIT_READJUSTMENT': {
+          if (!playerId) return;
+          const match = matches.get(msg.matchId);
+          if (!match) return;
+
+          const isP1 = match.p1Id === playerId;
+          if (isP1) {
+            match.p1Allocation = msg.allocation;
+            match.p1ReserveCard = msg.reserveCard;
+            match.p1Readjusted = true;
+          } else {
+            match.p2Allocation = msg.allocation;
+            match.p2ReserveCard = msg.reserveCard;
+            match.p2Readjusted = true;
+          }
+
+          const opponentId = isP1 ? match.p2Id : match.p1Id;
+          const opponent = players.get(opponentId);
+          if (opponent) {
+            sendWs(opponent.ws, { type: 'OPPONENT_READJUSTED' });
+          }
+
+          // When both players finish mid-round readjustment
+          if (
+            match.p1Readjusted &&
+            match.p2Readjusted &&
+            match.p1Allocation &&
+            match.p2Allocation &&
+            match.p1BetBox &&
+            match.p2BetBox &&
+            match.p1ReserveCard &&
+            match.p2ReserveCard
+          ) {
+            // Full evaluation of all 3 lanes
+            const p1LaneEvals: Record<LaneType, LaneEvaluation> = {
+              higher: evaluateLane(
+                match.p1Allocation.higher,
+                match.p2Allocation.higher,
+                'higher',
+                match.p1BetBox === 'higher',
+                match.p2BetBox === 'higher',
+                match.p1DoubleBet,
+                match.p2DoubleBet
+              ),
+              lower: evaluateLane(
+                match.p1Allocation.lower,
+                match.p2Allocation.lower,
+                'lower',
+                match.p1BetBox === 'lower',
+                match.p2BetBox === 'lower',
+                match.p1DoubleBet,
+                match.p2DoubleBet
+              ),
+              closest10: evaluateLane(
+                match.p1Allocation.closest10,
+                match.p2Allocation.closest10,
+                'closest10',
+                match.p1BetBox === 'closest10',
+                match.p2BetBox === 'closest10',
+                match.p1DoubleBet,
+                match.p2DoubleBet
+              ),
+            };
+
+            // Compute unallocated cards remaining in hand for this round
+            const p1UsedIds = new Set([
+              ...match.p1Allocation.higher.map(c => c.id),
+              ...match.p1Allocation.lower.map(c => c.id),
+              ...match.p1Allocation.closest10.map(c => c.id),
+            ]);
+            const p1Unused = match.p1Hand.filter(c => !p1UsedIds.has(c.id));
+
+            const p2UsedIds = new Set([
+              ...match.p2Allocation.higher.map(c => c.id),
+              ...match.p2Allocation.lower.map(c => c.id),
+              ...match.p2Allocation.closest10.map(c => c.id),
+            ]);
+            const p2Unused = match.p2Hand.filter(c => !p2UsedIds.has(c.id));
+
+            const p1RoundEval = evaluateRound(
+              p1LaneEvals,
+              p1Unused[0] || match.p1ReserveCard,
+              p2Unused[0] || match.p2ReserveCard,
+              match.roundNumber,
+              p1Unused,
+              p2Unused
+            );
+
+            // Update bank score
+            match.p1BankScore += p1RoundEval.playerTotalRoundPoints;
+            match.p2BankScore += p1RoundEval.opponentTotalRoundPoints;
+
+            match.rounds.push(p1RoundEval);
+
+            // Double bet for next round: player who scored fewer points in this round
+            const p1NextDouble = p1RoundEval.playerTotalRoundPoints < p1RoundEval.opponentTotalRoundPoints;
+            const p2NextDouble = p1RoundEval.opponentTotalRoundPoints < p1RoundEval.playerTotalRoundPoints;
+            match.p1DoubleBet = p1NextDouble;
+            match.p2DoubleBet = p2NextDouble;
+
+            const p1 = players.get(match.p1Id);
+            const p2 = players.get(match.p2Id);
+
+            if (match.roundNumber < 3) {
+              match.state = 'round_ended';
+              const nextRound = match.roundNumber + 1;
+
+              if (p1) {
+                sendWs(p1.ws, {
+                  type: 'ROUND_FINISHED',
+                  roundEvaluation: p1RoundEval,
+                  p1TotalBank: match.p1BankScore,
+                  p2TotalBank: match.p2BankScore,
+                  nextRoundNumber: nextRound,
+                  p1NextDoubleBet: p1NextDouble,
+                  p2NextDoubleBet: p2NextDouble,
+                });
+              }
+
+              // Invert perspective for P2
+              const p2RoundEval: RoundEvaluation = {
+                ...p1RoundEval,
+                playerRoundPoints: p1RoundEval.opponentRoundPoints,
+                opponentRoundPoints: p1RoundEval.playerRoundPoints,
+                playerBonusPoints: p1RoundEval.opponentBonusPoints,
+                opponentBonusPoints: p1RoundEval.playerBonusPoints,
+                playerTotalRoundPoints: p1RoundEval.opponentTotalRoundPoints,
+                opponentTotalRoundPoints: p1RoundEval.playerTotalRoundPoints,
+                roundWinner:
+                  p1RoundEval.roundWinner === 'player'
+                    ? 'opponent'
+                    : p1RoundEval.roundWinner === 'opponent'
+                    ? 'player'
+                    : 'draw',
+                playerReserveCard: p2Unused[0] || match.p2ReserveCard,
+                opponentReserveCard: p1Unused[0] || match.p1ReserveCard,
+                playerUnusedCards: p2Unused,
+                opponentUnusedCards: p1Unused,
+              };
+
+              if (p2) {
+                sendWs(p2.ws, {
+                  type: 'ROUND_FINISHED',
+                  roundEvaluation: p2RoundEval,
+                  p1TotalBank: match.p2BankScore,
+                  p2TotalBank: match.p1BankScore,
+                  nextRoundNumber: nextRound,
+                  p1NextDoubleBet: p2NextDouble,
+                  p2NextDoubleBet: p1NextDouble,
+                });
+              }
+            } else {
+              // 3 rounds completed! Final match evaluation using 3 leftover cards in hand
+              match.state = 'match_ended';
+              const matchEvalP1 = evaluate3RoundMatch(
+                match.rounds,
+                p1Unused,
+                p2Unused
+              );
+
+              const matchEvalP2 = evaluate3RoundMatch(
+                match.rounds.map(r => ({
+                  ...r,
+                  playerRoundPoints: r.opponentRoundPoints,
+                  opponentRoundPoints: r.playerRoundPoints,
+                  playerTotalRoundPoints: r.opponentTotalRoundPoints,
+                  opponentTotalRoundPoints: r.playerTotalRoundPoints,
+                  roundWinner:
+                    r.roundWinner === 'player'
+                      ? 'opponent'
+                      : r.roundWinner === 'opponent'
+                      ? 'player'
+                      : 'draw',
+                })),
+                p2Unused,
+                p1Unused
+              );
+
+              if (p1) {
+                sendWs(p1.ws, {
+                  type: 'MATCH_FINISHED',
+                  matchEvaluation: matchEvalP1,
+                });
+              }
+
+              if (p2) {
+                sendWs(p2.ws, {
+                  type: 'MATCH_FINISHED',
+                  matchEvaluation: matchEvalP2,
+                });
+              }
+            }
+          }
+          break;
+        }
+
+        case 'NEXT_ROUND_READY': {
+          if (!playerId) return;
+          const match = matches.get(msg.matchId);
+          if (!match) return;
+
+          const isP1 = match.p1Id === playerId;
+          if (isP1) match.p1Ready = true;
+          else match.p2Ready = true;
+
+          // Both players ready to proceed to next round
+          if (match.p1Ready && match.p2Ready && match.roundNumber < 3) {
+            dealRound(match, match.roundNumber + 1);
+
+            const p1 = players.get(match.p1Id);
+            const p2 = players.get(match.p2Id);
+
+            if (p1) {
+              sendWs(p1.ws, {
+                type: 'MATCH_START',
+                matchId: match.id,
+                playerNumber: 1,
+                p1Name: p1.nickname,
+                p2Name: p2?.nickname || 'Opponent',
+                hand: match.p1Hand,
+                drawPileCount: match.p1Deck.length,
+                roundNumber: match.roundNumber,
+                p1BankScore: match.p1BankScore,
+                p2BankScore: match.p2BankScore,
+                p1DoubleBet: match.p1DoubleBet,
+                p2DoubleBet: match.p2DoubleBet,
+                p1UsedSwap: match.p1UsedSwap,
+                p2UsedSwap: match.p2UsedSwap,
+              });
+            }
+
+            if (p2) {
+              sendWs(p2.ws, {
+                type: 'MATCH_START',
+                matchId: match.id,
+                playerNumber: 2,
+                p1Name: p1?.nickname || 'Commander',
+                p2Name: p2.nickname,
+                hand: match.p2Hand,
+                drawPileCount: match.p2Deck.length,
+                roundNumber: match.roundNumber,
+                p1BankScore: match.p1BankScore,
+                p2BankScore: match.p2BankScore,
+                p1DoubleBet: match.p1DoubleBet,
+                p2DoubleBet: match.p2DoubleBet,
+                p1UsedSwap: match.p1UsedSwap,
+                p2UsedSwap: match.p2UsedSwap,
               });
             }
           }
