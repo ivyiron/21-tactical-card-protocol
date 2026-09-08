@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
+import { createServer as createViteServer } from 'vite';
 import {
   Card,
   LaneType,
@@ -24,8 +25,7 @@ import {
 
 const app = express();
 const server = http.createServer(app);
-const PORT = Number(process.env.PORT) || 3000;
-const IS_DEV = process.argv.includes('--dev');
+const PORT = 3000;
 
 app.use(express.json());
 
@@ -998,8 +998,7 @@ app.get('/api/players', (req, res) => {
 
 // Vite middleware setup
 async function start() {
-  if (IS_DEV) {
-    const { createServer: createViteServer } = await import('vite');
+  if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
