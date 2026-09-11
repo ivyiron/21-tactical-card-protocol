@@ -203,13 +203,25 @@ export type ServerWsMessage =
   | { type: 'OPPONENT_DISCONNECTED' }
   | { type: 'ERROR'; message: string };
 
-export type AiPersonality = 'nexus' | 'vulcan' | 'oracle';
+export type AiDifficulty = 'nexus' | 'hardcore' | 'unfair';
+export type AiPersonality = AiDifficulty | 'vulcan' | 'oracle';
+
+export type AiBetTactic = 'counter_bet' | 'fake_bet' | 'flank_bet' | 'power_bet';
+
+export interface AiBetDecision {
+  betBox: LaneType;
+  tactic: AiBetTactic;
+  tacticReason: string;
+  doubleBet: boolean;
+  laneStrengths: Record<LaneType, number>;
+}
 
 export interface AiProfile {
-  id: AiPersonality;
+  id: AiDifficulty;
   name: string;
   title: string;
-  avatar: string;
+  badge: string;
+  color: string;
   tagline: string;
   description: string;
 }

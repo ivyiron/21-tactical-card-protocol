@@ -191,7 +191,7 @@ export const MatchHistoryModal: React.FC<MatchHistoryModalProps> = ({
                     {/* 3 Arena Box Breakdowns */}
                     <div className="space-y-3">
                       {(['higher', 'lower', 'closest10'] as LaneType[]).map((laneKey) => {
-                        const laneEval = roundData.laneEvaluations[laneKey];
+                        const laneEval = roundData?.laneEvaluations?.[laneKey];
                         if (!laneEval) return null;
 
                         const title =

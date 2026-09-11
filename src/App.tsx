@@ -7,9 +7,14 @@ import {
   evaluateRound,
   evaluate3RoundMatch,
   getAiTurn,
+  getAiUnfairTurn,
+  getAiHardcoreTurn,
   getAiReadjustment,
   determineFirstRevealLane,
   calculateReserveCardValue,
+  performTacticalSwap,
+  decideAiBetStrategy,
+  evaluateAiSwap,
 } from './utils/deck';
 import { sound } from './utils/sound';
 import { onlineGame } from './utils/onlineGame';
@@ -23,6 +28,8 @@ import {
   GamePhase,
   GameMode,
   AiPersonality,
+  AiDifficulty,
+  AiBetTactic,
   OnlineUser,
   IncomingChallengeData,
   OutgoingChallengeData,
@@ -102,6 +109,13 @@ export function App() {
   const [opponentBetBox, setOpponentBetBox] = useState<LaneType>('higher');
   const [playerDoubleBet, setPlayerDoubleBet] = useState<boolean>(false);
   const [opponentDoubleBet, setOpponentDoubleBet] = useState<boolean>(false);
+
+  // AI Tactical Thought & Reaction State
+  const [aiTactic, setAiTactic] = useState<AiBetTactic | null>(null);
+  const [aiTacticReason, setAiTacticReason] = useState<string>('');
+  const [isAiDeliberating, setIsAiDeliberating] = useState<boolean>(false);
+  const aiReactionTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hardcoreSecretLaneRef = useRef<LaneType>('higher');
 
   // 1x Match Swap across all 3 rounds
   const [hasUsedSwap, setHasUsedSwap] = useState<boolean>(false);
@@ -229,7 +243,9 @@ export function App() {
         setHasUsedSwap(isP1 ? data.p1UsedSwap : data.p2UsedSwap);
         setOpponentHasUsedSwap(isP1 ? data.p2UsedSwap : data.p1UsedSwap);
 
-        setCompletedRounds([]);
+        if ((data.roundNumber || 1) === 1) {
+          setCompletedRounds([]);
+        }
         setPlayerReserveCards([]);
         setOpponentReserveCards([]);
         setPlayerHand(data.hand);
@@ -333,12 +349,31 @@ export function App() {
       },
       onSwapCompleted: (data) => {
         sound.playDeal();
-        setPlayerHand(data.newHand);
         setHasUsedSwap(true);
+        const oldCard = selectedCard || playerHand[0] || null;
         setSelectedCard(null);
+
+        // Ensure newly drawn card replaces the swapped card in playerHand or playerAllocation
+        if (oldCard) {
+          setPlayerHand((prev) => prev.map((c) => (c.id === oldCard.id ? data.newCardDrawn : c)));
+          setPlayerAllocation((prev) => ({
+            higher: prev.higher.map((c) => (c.id === oldCard.id ? data.newCardDrawn : c)),
+            lower: prev.lower.map((c) => (c.id === oldCard.id ? data.newCardDrawn : c)),
+            closest10: prev.closest10.map((c) => (c.id === oldCard.id ? data.newCardDrawn : c)),
+          }));
+        } else {
+          // Fallback: sync hand excluding cards currently allocated in lanes
+          const allocatedIds = new Set([
+            ...playerAllocation.higher.map((c) => c.id),
+            ...playerAllocation.lower.map((c) => c.id),
+            ...playerAllocation.closest10.map((c) => c.id),
+          ]);
+          setPlayerHand(data.newHand.filter((c) => !allocatedIds.has(c.id)));
+        }
+
         setSwapAnimation({
           isSwapping: true,
-          oldCard: selectedCard || playerHand[0] || null,
+          oldCard: oldCard,
           newCard: data.newCardDrawn,
         });
         showToast(`Tactical Swap: Successfully swapped, received card [${data.newCardDrawn.label}]!`);
@@ -440,20 +475,44 @@ export function App() {
   const startNewAiMatch = () => {
     revealTimerRef.current.forEach((t) => clearTimeout(t));
     revealTimerRef.current = [];
+    if (aiReactionTimerRef.current) {
+      clearTimeout(aiReactionTimerRef.current);
+    }
     sound.playDeal();
 
-    // 21-card deck for each player
-    const pDeck = shuffleDeck(createDeck());
-    const oDeck = shuffleDeck(createDeck());
+    // 21-card deck for each player (independent 21-card decks)
+    const pDeck = shuffleDeck(createDeck('p1'));
+    const oDeck = shuffleDeck(createDeck('p2'));
 
     // Deal 6 cards for round 1
     const pHand6 = pDeck.slice(0, 6);
     const oHand6 = oDeck.slice(0, 6);
 
+    // Tactical Swap check for AI if hand is weak
+    let finalOHand = [...oHand6];
+    let remainingODeck = oDeck.slice(6);
+    const swapEval = evaluateAiSwap(finalOHand, remainingODeck, aiPersonality, new Set());
+    if (swapEval.shouldSwap && swapEval.cardToSwap) {
+      const cardToSwap = swapEval.cardToSwap;
+      const swapRes = performTacticalSwap(
+        remainingODeck,
+        cardToSwap,
+        new Set(finalOHand.map((c) => c.id))
+      );
+      if (swapRes.newCard) {
+        const drawn = swapRes.newCard;
+        finalOHand = finalOHand.map((c) => (c.id === cardToSwap.id ? drawn : c));
+        remainingODeck = swapRes.updatedRemainingDeck;
+        setOpponentHasUsedSwap(true);
+      }
+    } else {
+      setOpponentHasUsedSwap(false);
+    }
+
     setPlayerDeck(pDeck.slice(6));
-    setOpponentDeck(oDeck.slice(6));
+    setOpponentDeck(remainingODeck);
     setPlayerHand(pHand6);
-    setOpponentHand(oHand6);
+    setOpponentHand(finalOHand);
 
     setCurrentRound(1);
     setCompletedRounds([]);
@@ -464,7 +523,6 @@ export function App() {
     setPlayerDoubleBet(false);
     setOpponentDoubleBet(false);
     setHasUsedSwap(false);
-    setOpponentHasUsedSwap(false);
 
     setSelectedCard(null);
     setPlayerAllocation({ higher: [], lower: [], closest10: [] });
@@ -479,12 +537,32 @@ export function App() {
     setFirstRevealedLane(null);
     setIsFirstBoxEvaluated(false);
     setSuspenseStatusText('');
+    setIsAiDeliberating(false);
 
-    // Pre-calculate AI turn
-    const aiTurn = getAiTurn(oHand6, aiPersonality, false);
+    // Randomize 1 of 3 lanes secretly for Hardcore difficulty mode
+    const allLanes: LaneType[] = ['higher', 'lower', 'closest10'];
+    hardcoreSecretLaneRef.current = allLanes[Math.floor(Math.random() * allLanes.length)];
+
+    // Pre-calculate AI turn with full tactical intelligence
+    const aiTurn = getAiTurn(
+      finalOHand,
+      aiPersonality,
+      false,
+      'higher',
+      {
+        roundNumber: 1,
+        playerBankScore: 0,
+        aiBankScore: 0,
+        isPlayerLeading: false,
+      }
+    );
     setOpponentAllocation(aiTurn.allocation);
     setOpponentBetBox(aiTurn.betBox);
     setOpponentReserveCard(aiTurn.reserveCard);
+    setAiTactic(aiTurn.tactic || 'power_bet');
+    setAiTacticReason(aiTurn.tacticReason || '');
+    // Round 1: Neither player nor AI has double bet (Catch-up only applies to round losers)
+    setOpponentDoubleBet(false);
 
     // Start with Phase 1 Combat Preparation screen with Play / Ready button
     setGamePhase('phase_1_prep');
@@ -497,6 +575,60 @@ export function App() {
       startNewAiMatch();
     }
   }, [gameMode, aiPersonality]);
+
+  // Dynamic AI Tactical Bet Reaction Engine:
+  // Dynamically responds to player's bet changes, calculating Counter-Bets, Fake-Bets, or Flank-Bets
+  const triggerAiBetReaction = (targetPlayerBet: LaneType, isDoubleBet = playerDoubleBet) => {
+    if (gameMode !== 'vs_ai' || (gamePhase !== 'placement' && gamePhase !== 'phase_1_prep')) return;
+
+    setIsAiDeliberating(true);
+    if (aiReactionTimerRef.current) {
+      clearTimeout(aiReactionTimerRef.current);
+    }
+
+    aiReactionTimerRef.current = setTimeout(() => {
+      setIsAiDeliberating(false);
+      const matchCtx = {
+        roundNumber: currentRound,
+        playerBankScore,
+        aiBankScore: opponentBankScore,
+        isPlayerLeading: playerBankScore > opponentBankScore,
+      };
+
+      const betDecision = decideAiBetStrategy(
+        opponentAllocation,
+        targetPlayerBet,
+        isDoubleBet,
+        aiPersonality,
+        opponentDoubleBet,
+        matchCtx
+      );
+
+      setOpponentBetBox(betDecision.betBox);
+      // AI only doubles if it legitimately has catch-up double bet available from a previous round loss
+      setOpponentDoubleBet(opponentDoubleBet && betDecision.doubleBet);
+      setAiTactic(betDecision.tactic);
+      setAiTacticReason(betDecision.tacticReason);
+
+      // Audio cue & feedback
+      if (betDecision.betBox === targetPlayerBet) {
+        sound.playCardDrop();
+        showToast(`⚔️ Arena Clash: Both commanders have placed their bet on [${betDecision.betBox.toUpperCase()}]!`);
+      } else {
+        sound.playCardSelect();
+      }
+    }, 450);
+  };
+
+  const handlePlayerChangeBet = (lane: LaneType) => {
+    if (gamePhase !== 'placement' && gamePhase !== 'phase_1_prep') return;
+    setPlayerBetBox(lane);
+    sound.playCardSelect();
+    showToast(`Selected Box [${lane.toUpperCase()}] for your Bet!`);
+    if (gameMode === 'vs_ai') {
+      triggerAiBetReaction(lane, playerDoubleBet);
+    }
+  };
 
   // Trigger phase dealing animation into placement
   const handleStartDealing = () => {
@@ -512,6 +644,9 @@ export function App() {
   const handleProceedToNextRoundAi = () => {
     revealTimerRef.current.forEach((t) => clearTimeout(t));
     revealTimerRef.current = [];
+    if (aiReactionTimerRef.current) {
+      clearTimeout(aiReactionTimerRef.current);
+    }
 
     const nextR = currentRound + 1;
     if (nextR > 3) return;
@@ -537,10 +672,45 @@ export function App() {
     const oNew6 = opponentDeck.slice(0, 6);
 
     const fullPHand = [...pCarriedOver, ...pNew6];
-    const fullOHand = [...oCarriedOver, ...oNew6];
+    let fullOHand = [...oCarriedOver, ...oNew6];
+    let remainingODeck = opponentDeck.slice(6);
+
+    // Tactical Swap check for AI if hand has low synergy
+    if (!opponentHasUsedSwap && remainingODeck.length > 0) {
+      const playedCardsSet = new Set<string>();
+      completedRounds.forEach((r) => {
+        const laneEvals = r.laneEvaluations;
+        if (laneEvals) {
+          (['higher', 'lower', 'closest10'] as LaneType[]).forEach((l) => {
+            laneEvals[l]?.playerCards?.forEach((rc) => playedCardsSet.add(rc.card.id));
+            laneEvals[l]?.opponentCards?.forEach((rc) => playedCardsSet.add(rc.card.id));
+          });
+        }
+        if (r.opponentReserveCard) {
+          playedCardsSet.add(r.opponentReserveCard.id);
+        }
+      });
+      fullOHand.forEach((c) => playedCardsSet.add(c.id));
+
+      const swapEval = evaluateAiSwap(fullOHand, remainingODeck, aiPersonality, playedCardsSet);
+      if (swapEval.shouldSwap && swapEval.cardToSwap) {
+        const cardToSwap = swapEval.cardToSwap;
+        const swapRes = performTacticalSwap(
+          remainingODeck,
+          cardToSwap,
+          playedCardsSet
+        );
+        if (swapRes.newCard) {
+          const drawn = swapRes.newCard;
+          fullOHand = fullOHand.map((c) => (c.id === cardToSwap.id ? drawn : c));
+          remainingODeck = swapRes.updatedRemainingDeck;
+          setOpponentHasUsedSwap(true);
+        }
+      }
+    }
 
     setPlayerDeck((prev) => prev.slice(6));
-    setOpponentDeck((prev) => prev.slice(6));
+    setOpponentDeck(remainingODeck);
     setPlayerHand(fullPHand);
     setOpponentHand(fullOHand);
 
@@ -554,12 +724,32 @@ export function App() {
     setIsFirstBoxEvaluated(false);
     setTieBreakerStep(false);
     setSuspenseStatusText('');
+    setIsAiDeliberating(false);
 
-    // AI chooses turn using full hand (7 cards in R2, 8 cards in R3)
-    const aiTurn = getAiTurn(fullOHand, aiPersonality, opponentDoubleBet);
+    // Randomize 1 of 3 lanes secretly for Hardcore difficulty mode
+    const allLanes: LaneType[] = ['higher', 'lower', 'closest10'];
+    hardcoreSecretLaneRef.current = allLanes[Math.floor(Math.random() * allLanes.length)];
+
+    // AI chooses turn using full hand (7 cards in R2, 8 cards in R3) with tactical strategic thinking
+    const aiTurn = getAiTurn(
+      fullOHand,
+      aiPersonality,
+      opponentDoubleBet,
+      playerBetBox,
+      {
+        roundNumber: nextR,
+        playerBankScore,
+        aiBankScore: opponentBankScore,
+        isPlayerLeading: playerBankScore > opponentBankScore,
+      }
+    );
     setOpponentAllocation(aiTurn.allocation);
     setOpponentBetBox(aiTurn.betBox);
     setOpponentReserveCard(aiTurn.reserveCard);
+    setAiTactic(aiTurn.tactic || 'power_bet');
+    setAiTacticReason(aiTurn.tacticReason || '');
+    // AI only doubles if it legitimately has catch-up double bet available from previous round
+    setOpponentDoubleBet(opponentDoubleBet && (aiTurn.doubleBet ?? true));
 
     // Direct transition into placement with card dealing animation
     setGamePhase('placement');
@@ -689,19 +879,47 @@ export function App() {
     }
 
     // VS AI local swap
-    if (playerDeck.length === 0) {
-      showToast('No remaining cards in deck to swap!');
+    // Collect all card IDs already dealt to player or played in previous rounds
+    const alreadyDealtCardIds = new Set<string>();
+    playerHand.forEach((c) => alreadyDealtCardIds.add(c.id));
+    playerAllocation.higher.forEach((c) => alreadyDealtCardIds.add(c.id));
+    playerAllocation.lower.forEach((c) => alreadyDealtCardIds.add(c.id));
+    playerAllocation.closest10.forEach((c) => alreadyDealtCardIds.add(c.id));
+    playerReserveCards.forEach((c) => alreadyDealtCardIds.add(c.id));
+
+    completedRounds.forEach((round) => {
+      const laneEvals = round.laneEvaluations;
+      if (laneEvals) {
+        (['higher', 'lower', 'closest10'] as LaneType[]).forEach((l) => {
+          laneEvals[l]?.playerCards?.forEach((c) => alreadyDealtCardIds.add(c.card.id));
+        });
+      }
+      if (round.playerReserveCard) {
+        alreadyDealtCardIds.add(round.playerReserveCard.id);
+      }
+    });
+
+    const oldCard = selectedCard;
+    const swapResult = performTacticalSwap(playerDeck, oldCard, alreadyDealtCardIds);
+
+    if (swapResult.error || !swapResult.newCard) {
+      showToast(swapResult.error || 'No remaining cards in deck to swap!');
       return;
     }
 
-    const randomIndex = Math.floor(Math.random() * playerDeck.length);
-    const newCard = playerDeck[randomIndex];
-    const oldCard = selectedCard;
-    const updatedDeck = playerDeck.filter((_, idx) => idx !== randomIndex);
-
+    const newCard = swapResult.newCard;
     sound.playDeal();
+
+    // Replace in playerHand or playerAllocation
     setPlayerHand((prev) => prev.map((c) => (c.id === oldCard.id ? newCard : c)));
-    setPlayerDeck(updatedDeck);
+    setPlayerAllocation((prev) => ({
+      higher: prev.higher.map((c) => (c.id === oldCard.id ? newCard : c)),
+      lower: prev.lower.map((c) => (c.id === oldCard.id ? newCard : c)),
+      closest10: prev.closest10.map((c) => (c.id === oldCard.id ? newCard : c)),
+    }));
+
+    // The old card is permanently discarded; updatedRemainingDeck only contains un-drawn cards
+    setPlayerDeck(swapResult.updatedRemainingDeck);
     setHasUsedSwap(true);
     setSelectedCard(null);
     setSwapAnimation({
@@ -725,8 +943,56 @@ export function App() {
       return;
     }
 
-    // VS AI: Trigger first box reveal
-    const firstLane = determineFirstRevealLane(playerBetBox, opponentBetBox);
+    // Clear any lingering reaction timer so it does not trigger after confirm
+    if (aiReactionTimerRef.current) {
+      clearTimeout(aiReactionTimerRef.current);
+      aiReactionTimerRef.current = null;
+    }
+    setIsAiDeliberating(false);
+
+    // VS AI: AI bet box is strictly FIXED to what was already visible on the UI before confirming!
+    const finalOpponentBet = opponentBetBox;
+    if (gameMode === 'vs_ai') {
+      const matchCtx = {
+        roundNumber: currentRound,
+        playerBankScore,
+        aiBankScore: opponentBankScore,
+        isPlayerLeading: playerBankScore > opponentBankScore,
+      };
+
+      if (aiPersonality === 'unfair') {
+        // AI secretly optimizes its card placements across the 3 boxes, keeping its bet box locked
+        const unfairTurn = getAiUnfairTurn(
+          opponentHand,
+          playerAllocation,
+          playerBetBox,
+          playerDoubleBet,
+          opponentDoubleBet,
+          matchCtx,
+          finalOpponentBet // Strictly preserves AI's visible bet box
+        );
+        setOpponentAllocation(unfairTurn.allocation);
+        setOpponentReserveCard(unfairTurn.reserveCard);
+      } else if (aiPersonality === 'hardcore') {
+        // AI secretly optimizes card placements with its 1 known box, keeping its bet box locked
+        const secretLane = hardcoreSecretLaneRef.current;
+        const hardcoreTurn = getAiHardcoreTurn(
+          opponentHand,
+          secretLane,
+          playerAllocation[secretLane],
+          playerBetBox,
+          playerDoubleBet,
+          opponentDoubleBet,
+          matchCtx,
+          finalOpponentBet // Strictly preserves AI's visible bet box
+        );
+        setOpponentAllocation(hardcoreTurn.allocation);
+        setOpponentReserveCard(hardcoreTurn.reserveCard);
+      }
+      // For Nexus mode: opponentAllocation and opponentBetBox remain exactly as they were!
+    }
+
+    const firstLane = determineFirstRevealLane(playerBetBox, finalOpponentBet);
     setFirstRevealedLane(firstLane);
 
     setGamePhase('revealing_first_box');
@@ -785,12 +1051,19 @@ export function App() {
     ]);
     const oppUnused = opponentHand.filter((c) => !oppUsedIds.has(c.id));
 
+    const extraCheatData = {
+      playerAllocation,
+      secretLane: hardcoreSecretLaneRef.current,
+      playerSecretCards: playerAllocation[hardcoreSecretLaneRef.current],
+    };
+
     const aiAdjusted = getAiReadjustment(
       opponentAllocation,
       firstRevealedLane,
       outcome,
       aiPersonality,
-      oppUnused
+      oppUnused,
+      extraCheatData
     );
     setOpponentAllocation(aiAdjusted);
 
@@ -1036,6 +1309,8 @@ export function App() {
             setGameMode('online');
           }
         }}
+        aiDifficulty={aiPersonality as AiDifficulty}
+        onSelectAiDifficulty={(diff) => setAiPersonality(diff)}
         isMuted={isMuted}
         onToggleMute={handleToggleMute}
         onOpenRules={() => setShowRules(true)}
@@ -1185,47 +1460,59 @@ export function App() {
                   }
                   gameMode={gameMode}
                   isOnlineReady={isOnlineOpponentReady}
+                  aiDifficulty={aiPersonality as AiDifficulty}
+                  onSelectAiDifficulty={(diff) => setAiPersonality(diff)}
                 />
               ) : (
                 <>
                   {/* TACTICAL BETTING INTELLIGENCE BAR: OPPONENT BET ON TOP, YOUR BET BELOW */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3.5 py-2 bg-[#1a1a1a] text-white border-2 border-[#1a1a1a] shadow-[3px_3px_0_#ff4d00]">
-                {/* OPPONENT BET (ON TOP / FIRST) */}
-                <div className="flex items-center gap-2 font-mono text-[11px]">
-                  <span className="text-white/70 font-bold uppercase">OPPONENT BET:</span>
-                  {opponentBetBox ? (
-                    <span className="px-2 py-0.5 bg-white text-[#1a1a1a] font-cyber font-black uppercase tracking-wider text-xs border border-white">
-                      {opponentBetBox.toUpperCase()} ({opponentDoubleBet ? '2xBet (+4)' : 'BET (+2)'})
-                    </span>
-                  ) : (
-                    <span className="text-white/50 italic text-[10px]">SELECTING TARGET...</span>
-                  )}
-                  {opponentDoubleBet && (
-                    <span className="px-1.5 py-0.5 bg-yellow-400 text-[#1a1a1a] font-cyber font-black text-[9px] uppercase tracking-wider animate-pulse">
-                      ⚡ 2xBet (+4)
-                    </span>
-                  )}
-                </div>
+                  <div className="flex flex-col border-2 border-[#1a1a1a] shadow-[3px_3px_0_#ff4d00]">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3.5 py-2 bg-[#1a1a1a] text-white">
+                      {/* OPPONENT BET (ON TOP / FIRST) */}
+                      <div className="flex items-center flex-wrap gap-2 font-mono text-[11px]">
+                        <span className="text-white/70 font-bold uppercase">OPPONENT BET:</span>
+                        {isAiDeliberating ? (
+                          <span className="px-2 py-0.5 bg-yellow-400/20 text-yellow-300 font-cyber font-bold text-[10px] sm:text-xs border border-yellow-400/50 animate-pulse">
+                            ⚡ AI DELIBERATING...
+                          </span>
+                        ) : opponentBetBox ? (
+                          <span className="px-2 py-0.5 bg-white text-[#1a1a1a] font-cyber font-black uppercase tracking-wider text-xs border border-white">
+                            {opponentBetBox.toUpperCase()} ({opponentDoubleBet ? '2xBet (+4)' : 'BET (+2)'})
+                          </span>
+                        ) : (
+                          <span className="text-white/50 italic text-[10px]">SELECTING TARGET...</span>
+                        )}
+                        {opponentDoubleBet && (
+                          <span className="px-1.5 py-0.5 bg-yellow-400 text-[#1a1a1a] font-cyber font-black text-[9px] uppercase tracking-wider animate-pulse">
+                            ⚡ 2xBet (+4)
+                          </span>
+                        )}
+                      </div>
 
-                {/* YOUR BET (BELOW / SECOND) */}
-                <div className="flex items-center gap-2 font-mono text-[11px]">
-                  <Target className="w-3.5 h-3.5 text-[#ff4d00]" />
-                  <span className="text-white/70 font-bold uppercase">YOUR BET:</span>
-                  <span className="px-2 py-0.5 bg-[#ff4d00] text-white font-cyber font-black uppercase tracking-wider text-xs shadow-[1px_1px_0_#1a1a1a]">
-                    {playerBetBox.toUpperCase()} ({playerDoubleBet ? '2xBet (+4)' : 'BET (+2)'})
-                  </span>
-                  {playerDoubleBet && (
-                    <span className="px-1.5 py-0.5 bg-yellow-400 text-[#1a1a1a] font-cyber font-black text-[9px] uppercase tracking-wider animate-pulse">
-                      ⚡ 2xBet (+4)
-                    </span>
-                  )}
-                  {playerBetBox === opponentBetBox && (
-                    <span className="hidden sm:inline-block px-1.5 py-0.5 bg-[#ff4d00] text-white font-mono font-bold text-[9px] uppercase tracking-wider">
-                      ⚔️ ARENA CLASH
-                    </span>
-                  )}
-                </div>
-              </div>
+                      {/* YOUR BET (BELOW / SECOND) */}
+                      <div className="flex items-center flex-wrap gap-2 font-mono text-[11px]">
+                        <Target className="w-3.5 h-3.5 text-[#ff4d00]" />
+                        <span className="text-white/70 font-bold uppercase">YOUR BET:</span>
+                        <span className="px-2 py-0.5 bg-[#ff4d00] text-white font-cyber font-black uppercase tracking-wider text-xs shadow-[1px_1px_0_#1a1a1a]">
+                          {playerBetBox.toUpperCase()} ({playerDoubleBet ? '2xBet (+4)' : 'BET (+2)'})
+                        </span>
+                        {playerDoubleBet && (
+                          <span className="px-1.5 py-0.5 bg-yellow-400 text-[#1a1a1a] font-cyber font-black text-[9px] uppercase tracking-wider animate-pulse">
+                            ⚡ 2xBet (+4)
+                          </span>
+                        )}
+                        {playerBetBox === opponentBetBox ? (
+                          <span className="px-2 py-0.5 bg-red-600 text-white font-mono font-bold text-[9px] uppercase tracking-wider border border-white animate-pulse">
+                            ⚔️ ARENA CLASH
+                          </span>
+                        ) : (
+                          <span className="hidden sm:inline-block px-1.5 py-0.5 bg-white/10 text-white/70 font-mono text-[9px] uppercase tracking-wider border border-white/20">
+                            ⚡ SPLIT BETS
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
                 {/* THE 3 TACTICAL BOXES */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4.5">
@@ -1261,11 +1548,7 @@ export function App() {
                         isOpponentDoubleBet={opponentDoubleBet}
                         isBetSelectable={isSelectableForBet}
                         onSelectBet={() => {
-                          if (gamePhase === 'placement') {
-                            setPlayerBetBox(lane);
-                            sound.playCardSelect();
-                            showToast(`Selected Box [${lane.toUpperCase()}] for your Bet!`);
-                          }
+                          handlePlayerChangeBet(lane);
                         }}
                         isFirstRevealedBox={isFirst}
                       />
@@ -1419,11 +1702,7 @@ export function App() {
                                 key={`bet-btn-${b}`}
                                 type="button"
                                 onClick={() => {
-                                  if (gamePhase === 'placement') {
-                                    setPlayerBetBox(b);
-                                    sound.playCardSelect();
-                                    showToast(`Selected Box [${b.toUpperCase()}] for your Bet!`);
-                                  }
+                                  handlePlayerChangeBet(b);
                                 }}
                                 disabled={gamePhase !== 'placement'}
                                 className={`px-3 py-1.5 text-[10px] sm:text-[11px] font-cyber font-black uppercase tracking-wider border-2 transition-all cursor-pointer ${

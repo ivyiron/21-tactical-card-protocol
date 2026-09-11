@@ -1,7 +1,9 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Sparkles, Layers, Shield, Cpu } from 'lucide-react';
+import { Play, Sparkles, Layers, Shield, Cpu, Zap, Crosshair } from 'lucide-react';
 import { sound } from '../utils/sound';
+import { AiDifficulty } from '../types';
+import { AI_PROFILES } from '../utils/deck';
 
 interface Phase1PrepViewProps {
   onReady: () => void;
@@ -13,6 +15,8 @@ interface Phase1PrepViewProps {
   gameMode: 'vs_ai' | 'online';
   isOnlineReady?: boolean;
   opponentOnlineReady?: boolean;
+  aiDifficulty?: AiDifficulty;
+  onSelectAiDifficulty?: (difficulty: AiDifficulty) => void;
 }
 
 export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
@@ -25,7 +29,10 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
   gameMode,
   isOnlineReady = false,
   opponentOnlineReady = false,
+  aiDifficulty = 'nexus',
+  onSelectAiDifficulty,
 }) => {
+  const difficultyList: AiDifficulty[] = ['nexus', 'hardcore', 'unfair'];
   return (
     <div className="relative w-full bg-[#f8f7f4] border-2 border-[#1a1a1a] p-6 sm:p-10 shadow-[6px_6px_0_#1a1a1a] flex flex-col items-center justify-center my-4 overflow-hidden">
       {/* Background Cyber Grid lines */}
@@ -126,6 +133,58 @@ export const Phase1PrepView: React.FC<Phase1PrepViewProps> = ({
   </div>
 
 </div>
+
+      {/* AI DIFFICULTY PROTOCOL SELECTOR (VS AI MODE) */}
+      {gameMode === 'vs_ai' && onSelectAiDifficulty && (
+        <div className="relative z-10 w-full max-w-xl my-4 flex flex-col items-center">
+          <div className="flex items-center gap-2 mb-2">
+            <Cpu className="w-3.5 h-3.5 text-[#ff4d00]" />
+            <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-[#1a1a1a]">
+              PROTOCOL CORE
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 w-full">
+            {difficultyList.map((diff) => {
+              const profile = AI_PROFILES[diff];
+              const isSelected = aiDifficulty === diff;
+              return (
+                <button
+                  key={diff}
+                  id={`ai-diff-btn-${diff}`}
+                  type="button"
+                  onClick={() => {
+                    sound.playCardSelect();
+                    onSelectAiDifficulty(diff);
+                  }}
+                  className={`relative p-3 text-left transition-all border-2 cursor-pointer flex flex-col justify-between ${
+                    isSelected
+                      ? 'bg-white border-[#1a1a1a] shadow-[4px_4px_0_#ff4d00] -translate-y-0.5'
+                      : 'bg-white/70 border-[#1a1a1a]/30 hover:border-[#1a1a1a] shadow-[2px_2px_0_#1a1a1a]/20 opacity-85 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <span
+                      className={`font-cyber font-black text-sm uppercase tracking-wider ${
+                        isSelected ? 'text-[#ff4d00]' : 'text-[#1a1a1a]'
+                      }`}
+                    >
+                      {profile.name}
+                    </span>
+                  </div>
+
+                  {isSelected && (
+                    <div className="mt-2 pt-1 border-t border-[#1a1a1a]/15 flex items-center justify-between text-[9px] font-mono font-bold text-[#ff4d00]">
+                      <span>ACTIVE CORE</span>
+                      <span>●</span>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Action Button */}
       <div className="relative z-10 mt-4 flex flex-col items-center gap-2">

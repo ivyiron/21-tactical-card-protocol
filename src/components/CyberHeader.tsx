@@ -1,11 +1,13 @@
 import React from 'react';
-import { GameMode } from '../types';
-import { Volume2, VolumeX, HelpCircle, Bot, RefreshCw, Globe, Radio } from 'lucide-react';
+import { GameMode, AiDifficulty } from '../types';
+import { Volume2, VolumeX, HelpCircle, Bot, RefreshCw, Globe, Radio, Cpu } from 'lucide-react';
 import { sound } from '../utils/sound';
 
 interface CyberHeaderProps {
   gameMode: GameMode;
   onSelectGameMode: (mode: GameMode) => void;
+  aiDifficulty?: AiDifficulty;
+  onSelectAiDifficulty?: (difficulty: AiDifficulty) => void;
   isMuted: boolean;
   onToggleMute: () => void;
   onOpenRules: () => void;
@@ -19,6 +21,8 @@ interface CyberHeaderProps {
 export const CyberHeader: React.FC<CyberHeaderProps> = ({
   gameMode,
   onSelectGameMode,
+  aiDifficulty = 'nexus',
+  onSelectAiDifficulty,
   isMuted,
   onToggleMute,
   onOpenRules,
@@ -84,6 +88,7 @@ export const CyberHeader: React.FC<CyberHeaderProps> = ({
     )}
   </button>
 </div>
+
 
           {/* Online Players Count Indicator */}
           {gameMode === 'online' && (

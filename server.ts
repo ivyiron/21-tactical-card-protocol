@@ -21,6 +21,7 @@ import {
   determineFirstRevealLane,
   evaluateRound,
   evaluate3RoundMatch,
+  performTacticalSwap,
 } from './src/utils/deck';
 
 const app = express();
@@ -157,9 +158,9 @@ function dealRound(match: ActiveMatch, roundNum: number) {
 function startMatchBetween(p1: ConnectedPlayer, p2: ConnectedPlayer, isRematch = false, existingMatchId?: string) {
   const matchId = existingMatchId || `match_${Math.random().toString(36).substring(2, 9)}`;
 
-  // Each player gets a full 21-card deck
-  const p1Deck = shuffleDeck(createDeck());
-  const p2Deck = shuffleDeck(createDeck());
+  // Each player gets a full, independent 21-card deck with distinct IDs
+  const p1Deck = shuffleDeck(createDeck('p1'));
+  const p2Deck = shuffleDeck(createDeck('p2'));
 
   const p1Hand = p1Deck.slice(0, 6);
   const p1Remaining = p1Deck.slice(6);
@@ -462,17 +463,48 @@ wss.on('connection', (ws: WebSocket) => {
             return;
           }
 
-          // Randomly draw 1 card from unused deck
-          const randDeckIdx = Math.floor(Math.random() * currentDeck.length);
-          const drawnCard = currentDeck[randDeckIdx];
           const swappedCard = currentHand[cardIdx];
 
-          // Replace in hand and put old card back into deck
-          const newHand = [...currentHand];
-          newHand[cardIdx] = drawnCard;
+          // Build already-seen IDs set to guarantee cards in hand/allocations/previous rounds cannot be drawn
+          const alreadySeenIds = new Set<string>();
+          currentHand.forEach(c => alreadySeenIds.add(c.id));
+          alreadySeenIds.add(swappedCard.id);
 
-          const newDeck = currentDeck.filter((_, idx) => idx !== randDeckIdx);
-          newDeck.push(swappedCard);
+          const allocation = isP1 ? match.p1Allocation : match.p2Allocation;
+          if (allocation) {
+            allocation.higher.forEach(c => alreadySeenIds.add(c.id));
+            allocation.lower.forEach(c => alreadySeenIds.add(c.id));
+            allocation.closest10.forEach(c => alreadySeenIds.add(c.id));
+          }
+
+          const reserves = isP1 ? match.p1ReserveCards : match.p2ReserveCards;
+          reserves.forEach(c => alreadySeenIds.add(c.id));
+
+          // Include cards played in all previous completed rounds
+          match.rounds.forEach(round => {
+            const laneEvals = round.laneEvaluations;
+            if (laneEvals) {
+              (['higher', 'lower', 'closest10'] as LaneType[]).forEach(l => {
+                const cards = isP1 ? laneEvals[l]?.playerCards : laneEvals[l]?.opponentCards;
+                cards?.forEach(c => alreadySeenIds.add(c.card.id));
+              });
+            }
+            const rReserve = isP1 ? round.playerReserveCard : round.opponentReserveCard;
+            if (rReserve) alreadySeenIds.add(rReserve.id);
+          });
+
+          const swapResult = performTacticalSwap(currentDeck, swappedCard, alreadySeenIds);
+
+          if (swapResult.error || !swapResult.newCard) {
+            sendWs(ws, { type: 'ERROR', message: swapResult.error || 'No eligible cards remaining in deck to swap!' });
+            return;
+          }
+
+          const drawnCard = swapResult.newCard;
+          const newDeck = swapResult.updatedRemainingDeck;
+
+          // Replace in hand
+          const newHand = currentHand.map(c => (c.id === swappedCard.id ? drawnCard : c));
 
           if (isP1) {
             match.p1Hand = newHand;

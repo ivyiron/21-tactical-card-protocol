@@ -128,7 +128,7 @@ export const RoundTransitionModal: React.FC<RoundTransitionModalProps> = ({
             {/* 3 Box Result Quick Badges */}
             <div className="grid grid-cols-3 gap-2">
               {(['higher', 'lower', 'closest10'] as LaneType[]).map((lane) => {
-                const laneEval = roundEvaluation.laneEvaluations[lane];
+                const laneEval = roundEvaluation?.laneEvaluations?.[lane];
                 if (!laneEval) return null;
                 const win = laneEval.winner === 'player';
                 const oppWin = laneEval.winner === 'opponent';
